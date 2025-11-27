@@ -1,51 +1,24 @@
-import { ComplianceState } from '../enums';
+export type PlannedCallPurpose =
+  | "EDUCATION"
+  | "MARKETING"
+  | "ENROLLMENT"
+  | "SERVICE";
 
-export interface PreCallCheckResultDTO {
-  status: 'PASS' | 'FAIL';
+export type PreCallCheckType =
+  | "PERMISSION_TO_CONTACT"
+  | "DO_NOT_CONTACT_STATUS"
+  | "SOA_VALIDITY"
+  | "ELECTION_PERIOD_VALIDITY"
+  | "STATE_SPECIFIC_RULES";
+
+export interface PreCallCheckDto {
+  type: PreCallCheckType;
+  status: "PASS" | "FAIL" | "SKIPPED";
+  message?: string;
+}
+
+export interface PreCallCheckResultDto {
+  status: "PASS" | "FAIL";
   reasons: string[];
-  checkResults: Array<{
-    id: string;
-    checkType: string;
-    status: string;
-    details?: string | null;
-    checkedAt: string;
-  }>;
-  complianceState?: ComplianceState;
-}
-
-export interface ScopeOfAppointmentDTO {
-  id: string;
-  organizationId: string;
-  leadId: string;
-  agentId: string;
-  callSessionId?: string | null;
-  appointmentDate: string;
-  channel: string;
-  productTypes: string[];
-  statementAcknowledged: boolean;
-  signatureMethod: string;
-  signatureEvidenceUrl?: string | null;
-  status: string;
-  signedAt?: string | null;
-  expiresAt?: string | null;
-}
-
-export interface ScriptDTO {
-  id: string;
-  organizationId: string;
-  key: string;
-  name: string;
-  description?: string | null;
-  category: string;
-  applicableProductTypes?: string[];
-  isActive: boolean;
-}
-
-export interface ScriptStepDTO {
-  id: string;
-  scriptId: string;
-  order: number;
-  key: string;
-  content: string;
-  isRequired: boolean;
+  checks: PreCallCheckDto[];
 }
