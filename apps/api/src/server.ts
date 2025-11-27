@@ -4,6 +4,7 @@ import cors from "cors";
 import { loggingMiddleware } from "./middleware/logging";
 import { errorHandler } from "./middleware/errorHandler";
 import { authRouter } from "./modules/auth/routes";
+import { complianceRouter } from "./modules/compliance/routes";
 
 export function createServer(): Application {
   const app = express();
@@ -19,6 +20,9 @@ export function createServer(): Application {
 
   // Auth routes
   app.use("/api/auth", authRouter);
+
+  // Compliance routes
+  app.use("/api/compliance", complianceRouter);
 
   // Error handler (keep last)
   app.use(errorHandler);
