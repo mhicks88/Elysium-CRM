@@ -1,6 +1,8 @@
 import React from 'react';
 import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import LoginPage from './routes/auth';
+import { Link, Navigate, Route, Routes } from 'react-router-dom';
+import LoginPage from './routes/auth/Login';
 import DashboardPage from './routes/dashboard/Dashboard';
 import LeadsPage from './routes/leads/Leads';
 import LeadDetailPage from './routes/leads/LeadDetail';
@@ -10,6 +12,7 @@ import TasksPage from './routes/tasks/Tasks';
 import CompliancePage from './routes/compliance/Compliance';
 import AdminPage from './routes/admin/Admin';
 import { AuthProvider, useAuth } from './lib/auth';
+import { useAuth } from './lib/auth';
 
 function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -33,6 +36,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 }
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
+function PrivateRoute({ children }: { children: JSX.Element }) {
   const { user } = useAuth();
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -66,5 +70,27 @@ export default function App() {
         />
       </Routes>
     </AuthProvider>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/*"
+        element={
+          <PrivateRoute>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/leads" element={<LeadsPage />} />
+                <Route path="/leads/:id" element={<LeadDetailPage />} />
+                <Route path="/calls" element={<CallsPage />} />
+                <Route path="/calls/:id" element={<CallDetailPage />} />
+                <Route path="/tasks" element={<TasksPage />} />
+                <Route path="/compliance" element={<CompliancePage />} />
+                <Route path="/admin" element={<AdminPage />} />
+              </Routes>
+            </Layout>
+          </PrivateRoute>
+        }
+      />
+    </Routes>
   );
 }

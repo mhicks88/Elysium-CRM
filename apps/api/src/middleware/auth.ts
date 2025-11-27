@@ -18,6 +18,21 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     console.log(JSON.stringify({ level: 'warn', message: 'Missing authorization header', path: req.originalUrl }));
+import jwt from 'jsonwebtoken';
+import { env } from '../config/env';
+
+export interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    organizationId: string;
+    role: string;
+    email: string;
+  };
+}
+
+export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+  if (!header) {
     res.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Missing authorization header' } });
     return;
   }
@@ -39,6 +54,13 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     lastName: user.lastName
   };
   next();
+  try {
+    const decoded = jwt.verify(token, env.jwtSecret) as AuthenticatedRequest['user'];
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: { code: 'INVALID_TOKEN', message: 'Invalid or expired token' } });
+  }
 }
 
 export function requireRole(...roles: string[]) {
