@@ -1,15 +1,20 @@
-import { app } from './server';
-import { env } from './config/env';
-import { connectDb } from './db/client';
+import { createServer } from "./server";
 
-async function bootstrap(): Promise<void> {
-  await connectDb();
-  app.listen(env.port, () => {
-    console.log(JSON.stringify({ level: 'info', message: `API listening on port ${env.port}` }));
-  });
+async function main() {
+  try {
+    const port = Number(process.env.PORT) || 4000;
+
+    const app = createServer();
+
+    app.listen(port, () => {
+      // eslint-disable-next-line no-console
+      console.log(`API listening on port ${port}`);
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  }
 }
 
-bootstrap().catch((err) => {
-  console.error(JSON.stringify({ level: 'error', message: 'Failed to start server', error: err }));
-  process.exit(1);
-});
+main();

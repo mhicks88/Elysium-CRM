@@ -1,96 +1,74 @@
-import React from 'react';
-import { Link, Navigate, Route, Routes } from 'react-router-dom';
-import LoginPage from './routes/auth';
-import { Link, Navigate, Route, Routes } from 'react-router-dom';
-import LoginPage from './routes/auth/Login';
-import DashboardPage from './routes/dashboard/Dashboard';
-import LeadsPage from './routes/leads/Leads';
-import LeadDetailPage from './routes/leads/LeadDetail';
-import CallsPage from './routes/calls/Calls';
-import CallDetailPage from './routes/calls/CallDetail';
-import TasksPage from './routes/tasks/Tasks';
-import CompliancePage from './routes/compliance/Compliance';
-import AdminPage from './routes/admin/Admin';
-import { AuthProvider, useAuth } from './lib/auth';
-import { useAuth } from './lib/auth';
 
-function Layout({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <aside style={{ width: '220px', padding: '1rem', background: '#0f172a', color: '#e2e8f0' }}>
-        <h2>Elysium-CRM</h2>
-        <nav>
-          <ul style={{ listStyle: 'none', padding: 0 }}>
-            <li><Link to="/">Dashboard</Link></li>
-            <li><Link to="/leads">Leads</Link></li>
-            <li><Link to="/calls">Calls</Link></li>
-            <li><Link to="/tasks">Tasks</Link></li>
-            <li><Link to="/compliance">Compliance</Link></li>
-            <li><Link to="/admin">Admin</Link></li>
-          </ul>
-        </nav>
-      </aside>
-      <main style={{ flex: 1, padding: '1.5rem' }}>{children}</main>
-    </div>
-  );
-}
+import React from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
 
-function ProtectedRoute({ children }: { children: JSX.Element }) {
-function PrivateRoute({ children }: { children: JSX.Element }) {
-  const { user } = useAuth();
+import { AuthProvider, useAuth } from "./lib/auth";
+import LoginPage from "./routes/auth";
+
+type ProtectedRouteProps = {
+  children: React.ReactElement;
+};
+
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
-  return children;
-}
 
-export default function App() {
+  return children;
+};
+
+// Simple inline dashboard for now
+const DashboardPage: React.FC = () => {
   return (
-    <AuthProvider>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/*"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<DashboardPage />} />
-                  <Route path="/leads" element={<LeadsPage />} />
-                  <Route path="/leads/:id" element={<LeadDetailPage />} />
-                  <Route path="/calls" element={<CallsPage />} />
-                  <Route path="/calls/:id" element={<CallDetailPage />} />
-                  <Route path="/tasks" element={<TasksPage />} />
-                  <Route path="/compliance" element={<CompliancePage />} />
-                  <Route path="/admin" element={<AdminPage />} />
-                </Routes>
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>
-    </AuthProvider>
+    <div style={{ padding: "1.5rem" }}>
+      <h1>Elysium CRM Dashboard</h1>
+      <p>Welcome! You are logged in.</p>
+    </div>
+  );
+};
+
+const AppShell: React.FC = () => {
+  return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/*"
-        element={
-          <PrivateRoute>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/leads" element={<LeadsPage />} />
-                <Route path="/leads/:id" element={<LeadDetailPage />} />
-                <Route path="/calls" element={<CallsPage />} />
-                <Route path="/calls/:id" element={<CallDetailPage />} />
-                <Route path="/tasks" element={<TasksPage />} />
-                <Route path="/compliance" element={<CompliancePage />} />
-                <Route path="/admin" element={<AdminPage />} />
-              </Routes>
-            </Layout>
-          </PrivateRoute>
-        }
-      />
+      <Route path="/" element={<DashboardPage />} />
+      {/* Future: add /leads, /calls, etc. routes here */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
-}
+};
+
+const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          {/* Public route */}
+          <Route path="/login" element={<LoginPage />} />
+          {/* Protected app */}
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <AppShell />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+};
+
+export default App;
+

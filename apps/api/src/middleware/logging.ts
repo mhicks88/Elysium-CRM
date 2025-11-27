@@ -1,18 +1,17 @@
-import { Request, Response, NextFunction } from 'express';
-import { performance } from 'perf_hooks';
+import { Request, Response, NextFunction } from "express";
 
-export function loggingMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const start = performance.now();
-  res.on('finish', () => {
-    const duration = Math.round(performance.now() - start);
-    const log = {
-      level: 'info',
-      method: req.method,
-      path: req.originalUrl,
-      status: res.statusCode,
-      durationMs: duration
-    };
-    console.log(JSON.stringify(log));
+export function loggingMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    // eslint-disable-next-line no-console
+    console.log(
+      `${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`
+    );
   });
   next();
 }
