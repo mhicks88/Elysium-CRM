@@ -1,0 +1,16 @@
+{
+  "name": "elysium-crm",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared-types",
+    "packages/shared-utils"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/api & npm run dev --workspace apps/web",
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces"
+  }
+}
