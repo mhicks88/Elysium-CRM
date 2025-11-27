@@ -1,0 +1,458 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  AGENT
+  COMPLIANCE
+  READ_ONLY
+}
+
+enum LeadSource {
+  INBOUND_CALL
+  WEB_FORM
+  TRANSFER
+  LIST
+  REFERRAL
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACT_ATTEMPTED
+  CONTACTED
+  SOA_REQUIRED
+  SOA_COMPLETED
+  IN_DISCUSSION
+  ENROLLED
+  NOT_INTERESTED
+  DO_NOT_CONTACT
+}
+
+enum TaskType {
+  CALL_BACK
+  FOLLOW_UP
+  DOCUMENT_REQUEST
+  COMPLIANCE_REVIEW
+  OTHER
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum DialerIntegrationType {
+  GENERIC_HTTP
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallPurpose {
+  EDUCATION
+  MARKETING
+  ENROLLMENT
+  SERVICE
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  CONNECTED
+  FAILED
+  COMPLETED
+  ABANDONED
+}
+
+enum ComplianceState {
+  PRE_CALL_CHECKS_PENDING
+  PRE_CALL_CHECKS_FAILED
+  PRE_CALL_CHECKS_PASSED
+  SOA_REQUIRED
+  SOA_COMPLETED
+  DISCLOSURES_PENDING
+  DISCLOSURES_COMPLETED
+  READY_FOR_ENROLLMENT
+}
+
+enum PreCallCheckType {
+  PERMISSION_TO_CONTACT
+  DO_NOT_CONTACT_STATUS
+  SOA_VALIDITY
+  ELECTION_PERIOD_VALIDITY
+  STATE_SPECIFIC_RULES
+}
+
+enum PreCallCheckStatus {
+  PASS
+  FAIL
+  SKIPPED
+}
+
+enum ScopeOfAppointmentChannel {
+  IN_PERSON
+  TELEPHONIC
+  VIRTUAL
+  OTHER
+}
+
+enum ScopeOfAppointmentSignatureMethod {
+  ELECTRONIC
+  VERBAL_RECORDING
+  PAPER
+}
+
+enum ScopeOfAppointmentStatus {
+  PENDING
+  SIGNED
+  REVOKED
+  EXPIRED
+}
+
+enum ScriptCategory {
+  INTRO
+  DISCLAIMER
+  BENEFIT_DISCUSSION
+  CLOSE
+  ENROLLMENT_VERIFICATION
+  OTHER
+}
+
+enum EnrollmentStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum EnrollmentVerificationMethod {
+  PHONE
+  EMAIL
+  LETTER
+}
+
+enum EnrollmentVerificationOutcome {
+  CONFIRMED
+  NOT_REACHED
+  REFUSED
+  CANCELLED
+  PENDING
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  settings  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+  leads     Lead[]
+  tasks     Task[]
+  notes     Note[]
+  dialerIntegrations DialerIntegration[]
+  callSessions CallSession[]
+  scopeOfAppointments ScopeOfAppointment[]
+  scripts   Script[]
+  deliveredDisclosures DeliveredDisclosure[]
+  enrollments Enrollment[]
+  auditEvents AuditEvent[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  firstName      String
+  lastName       String
+  email          String   @unique
+  passwordHash   String
+  role           UserRole
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  leads          Lead[]     @relation("LeadAssignee")
+  tasks          Task[]     @relation("TaskAssignee")
+  notes          Note[]     @relation("NoteAuthor")
+  callSessions   CallSession[] @relation("CallAgent")
+  preCallChecks  PreCallCheck[] @relation("CheckUser")
+  scopeOfAppointments ScopeOfAppointment[] @relation("SOAAgent")
+  deliveredDisclosures DeliveredDisclosure[] @relation("DisclosureAgent")
+  enrollments    Enrollment[] @relation("EnrollmentAgent")
+  auditEvents    AuditEvent[] @relation("AuditActor")
+}
+
+model Lead {
+  id                          String   @id @default(cuid())
+  organizationId              String
+  firstName                   String
+  lastName                    String
+  dateOfBirth                 DateTime
+  phonePrimary                String
+  phoneAlt                    String?
+  email                       String?
+  addressLine1                String
+  addressLine2                String?
+  city                        String
+  state                       String
+  zip                         String
+  timeZone                    String
+  leadSource                  LeadSource
+  permissionToContactPhone    Boolean
+  permissionToContactEmail    Boolean
+  permissionSource            String
+  permissionCapturedAt        DateTime?
+  status                      LeadStatus
+  assignedToUserId            String?
+  notesSummary                String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  organization                Organization @relation(fields: [organizationId], references: [id])
+  assignedTo                  User? @relation("LeadAssignee", fields: [assignedToUserId], references: [id])
+  tasks                       Task[]
+  notes                       Note[]
+  callSessions                CallSession[]
+  scopeOfAppointments         ScopeOfAppointment[]
+  enrollments                 Enrollment[]
+  contactPreferenceChanges    LeadContactPreferenceChange[]
+  deliveredDisclosures        DeliveredDisclosure[]
+}
+
+model LeadContactPreferenceChange {
+  id                      String   @id @default(cuid())
+  leadId                  String
+  changedByUserId         String
+  previousPermissionPhone Boolean
+  newPermissionPhone      Boolean
+  previousPermissionEmail Boolean
+  newPermissionEmail      Boolean
+  reason                  String
+  createdAt               DateTime @default(now())
+  lead                    Lead @relation(fields: [leadId], references: [id])
+  changedBy               User @relation(fields: [changedByUserId], references: [id])
+}
+
+model Task {
+  id               String   @id @default(cuid())
+  organizationId   String
+  leadId           String
+  assignedToUserId String
+  type             TaskType
+  status           TaskStatus
+  priority         TaskPriority
+  title            String
+  description      String
+  dueAt            DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  lead             Lead @relation(fields: [leadId], references: [id])
+  assignedTo       User @relation("TaskAssignee", fields: [assignedToUserId], references: [id])
+}
+
+model Note {
+  id             String   @id @default(cuid())
+  organizationId String
+  leadId         String
+  authorUserId   String
+  body           String
+  isInternal     Boolean
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  lead           Lead @relation(fields: [leadId], references: [id])
+  author         User @relation("NoteAuthor", fields: [authorUserId], references: [id])
+}
+
+model DialerIntegration {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  type           DialerIntegrationType
+  baseUrl        String
+  apiKey         String?
+  settings       Json
+  isActive       Boolean @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  callSessions   CallSession[]
+}
+
+model CallSession {
+  id                   String   @id @default(cuid())
+  organizationId       String
+  leadId               String
+  agentId              String
+  dialerIntegrationId  String
+  externalCallId       String
+  direction            CallDirection
+  purpose              CallPurpose
+  status               CallStatus
+  complianceState      ComplianceState
+  startedAt            DateTime @default(now())
+  connectedAt          DateTime?
+  endedAt              DateTime?
+  recordingUrl         String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  lead                 Lead @relation(fields: [leadId], references: [id])
+  agent                User @relation("CallAgent", fields: [agentId], references: [id])
+  dialerIntegration    DialerIntegration @relation(fields: [dialerIntegrationId], references: [id])
+  events               CallEvent[]
+  preCallChecks        PreCallCheck[]
+  deliveredDisclosures DeliveredDisclosure[]
+  enrollments          Enrollment[]
+  scopeOfAppointments  ScopeOfAppointment[]
+}
+
+model CallEvent {
+  id            String   @id @default(cuid())
+  callSessionId String
+  eventType     String
+  payload       Json
+  createdAt     DateTime @default(now())
+  callSession   CallSession @relation(fields: [callSessionId], references: [id])
+}
+
+model PreCallCheck {
+  id            String   @id @default(cuid())
+  callSessionId String
+  checkType     PreCallCheckType
+  status        PreCallCheckStatus
+  details       String?
+  checkedAt     DateTime @default(now())
+  checkedByUserId String?
+  callSession   CallSession @relation(fields: [callSessionId], references: [id])
+  checkedBy     User? @relation("CheckUser", fields: [checkedByUserId], references: [id])
+}
+
+model ScopeOfAppointment {
+  id                String   @id @default(cuid())
+  organizationId    String
+  leadId            String
+  agentId           String
+  callSessionId     String?
+  appointmentDate   DateTime
+  channel           ScopeOfAppointmentChannel
+  productTypes      String[]
+  statementAcknowledged Boolean
+  signatureMethod   ScopeOfAppointmentSignatureMethod
+  signatureEvidenceUrl String?
+  status            ScopeOfAppointmentStatus
+  signedAt          DateTime?
+  expiresAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  lead              Lead @relation(fields: [leadId], references: [id])
+  agent             User @relation("SOAAgent", fields: [agentId], references: [id])
+  callSession       CallSession? @relation(fields: [callSessionId], references: [id])
+}
+
+model Script {
+  id                     String   @id @default(cuid())
+  organizationId         String
+  key                    String
+  name                   String
+  description            String?
+  category               ScriptCategory
+  applicableProductTypes String[]
+  isActive               Boolean @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  organization           Organization @relation(fields: [organizationId], references: [id])
+  steps                  ScriptStep[]
+  deliveredDisclosures   DeliveredDisclosure[]
+}
+
+model ScriptStep {
+  id         String   @id @default(cuid())
+  scriptId   String
+  order      Int
+  key        String
+  content    String
+  isRequired Boolean
+  script     Script @relation(fields: [scriptId], references: [id])
+}
+
+model DeliveredDisclosure {
+  id            String   @id @default(cuid())
+  organizationId String
+  scriptId      String
+  scriptStepId  String
+  callSessionId String
+  agentId       String
+  leadId        String
+  deliveredAt   DateTime @default(now())
+  notes         String?
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  script        Script @relation(fields: [scriptId], references: [id])
+  scriptStep    ScriptStep @relation(fields: [scriptStepId], references: [id])
+  callSession   CallSession @relation(fields: [callSessionId], references: [id])
+  agent         User @relation("DisclosureAgent", fields: [agentId], references: [id])
+  lead          Lead @relation(fields: [leadId], references: [id])
+}
+
+model Enrollment {
+  id              String   @id @default(cuid())
+  organizationId  String
+  leadId          String
+  agentId         String
+  callSessionId   String?
+  planNameOrId    String
+  effectiveDate   DateTime
+  status          EnrollmentStatus
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  lead            Lead @relation(fields: [leadId], references: [id])
+  agent           User @relation("EnrollmentAgent", fields: [agentId], references: [id])
+  callSession     CallSession? @relation(fields: [callSessionId], references: [id])
+  verifications   EnrollmentVerification[]
+}
+
+model EnrollmentVerification {
+  id            String   @id @default(cuid())
+  enrollmentId  String
+  method        EnrollmentVerificationMethod
+  contactDetail String
+  initiatedAt   DateTime @default(now())
+  completedAt   DateTime?
+  outcome       EnrollmentVerificationOutcome
+  notes         String?
+  createdAt     DateTime @default(now())
+  enrollment    Enrollment @relation(fields: [enrollmentId], references: [id])
+}
+
+model AuditEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  entityType     String
+  entityId       String
+  eventType      String
+  actorUserId    String?
+  metadata       Json
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  actor          User? @relation("AuditActor", fields: [actorUserId], references: [id])
+}

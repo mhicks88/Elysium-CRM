@@ -1,0 +1,34 @@
+version: '3.9'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: elysium_crm
+    ports:
+      - '5432:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+  api:
+    build: ../apps/api
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/elysium_crm
+      JWT_SECRET: changeme
+      DIALER_GENERIC_BASE_URL: https://dialer.example.com
+      DIALER_GENERIC_API_KEY: changeme
+      DIALER_WEBHOOK_SECRET: changeme
+    ports:
+      - '4000:4000'
+  web:
+    build: ../apps/web
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: http://api:4000
+    ports:
+      - '5173:80'
+volumes:
+  db-data:
