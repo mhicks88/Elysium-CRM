@@ -6,6 +6,12 @@ import type {
   PreCallCheckResultDto,
   PlannedCallPurpose,
 } from "@elysium-crm/shared-types/dto/compliance";
+import type {
+  LeadDetailDto,
+  LeadListResponseDto,
+  LeadStatus,
+  UpdateLeadRequestDto,
+} from "@elysium-crm/shared-types/dto/lead";
 import { readStoredToken } from "./auth";
 
 const API_BASE_URL =
@@ -68,6 +74,41 @@ export async function runPreCallCheck(params: {
   return request<PreCallCheckResultDto>("/api/compliance/pre-call-check", {
     method: "POST",
     body: JSON.stringify(params),
+  });
+}
+
+/**
+ * Leads API helpers
+ */
+export async function getLeads(params: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: LeadStatus | "ALL";
+}): Promise<LeadListResponseDto> {
+  const searchParams = new URLSearchParams();
+  if (params.page) searchParams.append("page", String(params.page));
+  if (params.pageSize) searchParams.append("pageSize", String(params.pageSize));
+  if (params.search) searchParams.append("search", params.search);
+  if (params.status) searchParams.append("status", params.status);
+
+  const query = searchParams.toString();
+  const url = query ? `/api/leads?${query}` : "/api/leads";
+
+  return request<LeadListResponseDto>(url);
+}
+
+export async function getLeadById(id: string): Promise<LeadDetailDto> {
+  return request<LeadDetailDto>(`/api/leads/${id}`);
+}
+
+export async function updateLead(
+  id: string,
+  payload: UpdateLeadRequestDto,
+): Promise<LeadDetailDto> {
+  return request<LeadDetailDto>(`/api/leads/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
   });
 }
 
