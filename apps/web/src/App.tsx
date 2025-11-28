@@ -10,6 +10,8 @@ import {
 import { AuthProvider, useAuth } from "./lib/auth";
 import LoginPage from "./routes/auth";
 import CompliancePage from "./routes/compliance";
+import LeadsPage from "./routes/leads";
+import LeadDetailPage from "./routes/leads/LeadDetail";
 
 type ProtectedRouteProps = {
   children: React.ReactElement;
@@ -44,6 +46,8 @@ const AppShell: React.FC = () => {
     <Routes>
       <Route path="/" element={<DashboardPage />} />
       <Route path="/compliance" element={<CompliancePage />} />
+      <Route path="/leads" element={<LeadsPage />} />
+      <Route path="/leads/:id" element={<LeadDetailPage />} />
       {/* Future: add /leads, /calls, etc. routes here */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
