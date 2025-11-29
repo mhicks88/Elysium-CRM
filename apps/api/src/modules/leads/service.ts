@@ -1,13 +1,13 @@
-import { Prisma } from "@prisma/client";
-import {
-  LeadDetailDto,
-  LeadListItemDto,
-  LeadListResponseDto,
-  LeadStatus,
-  UpdateLeadRequestDto,
-} from "@elysium-crm/shared-types/dto/lead";
+// apps/api/src/modules/leads/service.ts
 
 import { prisma } from "../../db/client";
+import {
+  LeadStatus,
+  LeadListResponseDto,
+  LeadListItemDto,
+  LeadDetailDto,
+  UpdateLeadRequestDto,
+} from "@elysium-crm/shared-types";
 
 export interface ListLeadsParams {
   page?: number;
@@ -16,191 +16,172 @@ export interface ListLeadsParams {
   status?: LeadStatus | "ALL";
 }
 
-const MAX_PAGE_SIZE = 100;
-const DEFAULT_PAGE_SIZE = 25;
+/**
+ * Map a Lead Prisma record into a LeadListItemDto.
+ * This version does NOT assume any relations are present,
+ * so assignedToName is left as null for now.
+ */
+function mapLeadToListItem(lead: any): LeadListItemDto {
+  return {
+    id: lead.id,
+    firstName: lead.firstName,
+    lastName: lead.lastName,
+    email: lead.email ?? null,
+    phone: lead.phone ?? null,
+    state: lead.state ?? null,
+    status: lead.status as LeadStatus,
+    createdAt: lead.createdAt.toISOString(),
+    updatedAt: lead.updatedAt.toISOString(),
+    assignedToName: null, // TODO: map from relation if/when you expose it
+  };
+}
 
-const mapLeadListItem = (lead: {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string | null;
-  phonePrimary: string;
-  state: string;
-  status: LeadStatus;
-  createdAt: Date;
-  updatedAt: Date;
-  assignedTo: { firstName: string; lastName: string } | null;
-}): LeadListItemDto => ({
-  id: lead.id,
-  firstName: lead.firstName,
-  lastName: lead.lastName,
-  email: lead.email ?? null,
-  phone: lead.phonePrimary ?? null,
-  state: lead.state ?? null,
-  status: lead.status,
-  createdAt: lead.createdAt.toISOString(),
-  updatedAt: lead.updatedAt.toISOString(),
-  assignedToName: lead.assignedTo
-    ? `${lead.assignedTo.firstName} ${lead.assignedTo.lastName}`
-    : null,
-});
+/**
+ * Map a Lead Prisma record into a LeadDetailDto.
+ */
+function mapLeadToDetail(lead: any): LeadDetailDto {
+  return {
+    id: lead.id,
+    firstName: lead.firstName,
+    lastName: lead.lastName,
+    email: lead.email ?? null,
+    phone: lead.phone ?? null,
+    state: lead.state ?? null,
+    zip: lead.zip ?? null,
+    status: lead.status as LeadStatus,
+    notes: lead.notes ?? null,
+    timezone: lead.timezone ?? null,
+    permissionToContactPhone: !!lead.permissionToContactPhone,
+    doNotContact: !!lead.doNotContact,
+    createdAt: lead.createdAt.toISOString(),
+    updatedAt: lead.updatedAt.toISOString(),
+    assignedToId: lead.assignedToId ?? null,
+    assignedToName: null, // TODO: map from relation if/when you expose it
+  };
+}
 
-const mapLeadDetail = (lead: {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string | null;
-  phonePrimary: string;
-  state: string;
-  zip: string;
-  status: LeadStatus;
-  notesSummary: string | null;
-  timeZone: string;
-  permissionToContactPhone: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  assignedToUserId: string | null;
-  assignedTo: { firstName: string; lastName: string } | null;
-}): LeadDetailDto => ({
-  id: lead.id,
-  firstName: lead.firstName,
-  lastName: lead.lastName,
-  email: lead.email ?? null,
-  phone: lead.phonePrimary ?? null,
-  state: lead.state ?? null,
-  zip: lead.zip ?? null,
-  status: lead.status,
-  notes: lead.notesSummary ?? null,
-  timezone: lead.timeZone ?? null,
-  permissionToContactPhone: lead.permissionToContactPhone,
-  doNotContact: lead.status === LeadStatus.DO_NOT_CONTACT,
-  createdAt: lead.createdAt.toISOString(),
-  updatedAt: lead.updatedAt.toISOString(),
-  assignedToId: lead.assignedToUserId,
-  assignedToName: lead.assignedTo
-    ? `${lead.assignedTo.firstName} ${lead.assignedTo.lastName}`
-    : null,
-});
-
+/**
+ * List leads for a given organization with basic pagination and filtering.
+ */
 export async function listLeads(
-  orgId: string,
-  params: ListLeadsParams,
+  organizationId: string,
+  params: ListLeadsParams
 ): Promise<LeadListResponseDto> {
-  const page = Math.max(1, params.page ?? 1);
-  const rawPageSize = params.pageSize ?? DEFAULT_PAGE_SIZE;
-  const pageSize = Math.min(Math.max(1, rawPageSize), MAX_PAGE_SIZE);
-  const skip = (page - 1) * pageSize;
+  const page = params.page && params.page > 0 ? params.page : 1;
+  const pageSize =
+    params.pageSize && params.pageSize > 0 ? params.pageSize : 25;
 
-  const where: Prisma.LeadWhereInput = { organizationId: orgId };
+  const where: any = {
+    organizationId,
+  };
 
   if (params.status && params.status !== "ALL") {
-    where.status = params.status as any;
+    where.status = params.status;
   }
 
   if (params.search) {
-    const term = params.search.trim();
-    if (term.length > 0) {
+    const search = params.search.trim();
+    if (search.length > 0) {
       where.OR = [
-        { firstName: { contains: term, mode: "insensitive" } },
-        { lastName: { contains: term, mode: "insensitive" } },
-        { email: { contains: term, mode: "insensitive" } },
-        { phonePrimary: { contains: term, mode: "insensitive" } },
+        { firstName: { contains: search, mode: "insensitive" } },
+        { lastName: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
       ];
     }
   }
 
-  const [items, total] = await Promise.all([
+  const [leads, total] = await Promise.all([
     prisma.lead.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      skip,
+      skip: (page - 1) * pageSize,
       take: pageSize,
-      include: {
-        assignedTo: {
-          select: { firstName: true, lastName: true },
-        },
-      },
     }),
     prisma.lead.count({ where }),
   ]);
 
+  const items: LeadListItemDto[] = leads.map(mapLeadToListItem);
+
   return {
-    items: items.map(mapLeadListItem),
+    items,
     page,
     pageSize,
     total,
   };
 }
 
+/**
+ * Get a single lead by id for a given organization.
+ */
 export async function getLeadById(
-  orgId: string,
-  leadId: string,
+  organizationId: string,
+  leadId: string
 ): Promise<LeadDetailDto> {
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, organizationId: orgId },
-    include: {
-      assignedTo: { select: { firstName: true, lastName: true } },
+    where: {
+      id: leadId,
+      organizationId,
     },
   });
 
   if (!lead) {
-    const error = new Error("Lead not found");
-    (error as any).status = 404;
+    const error: any = new Error("Lead not found");
+    error.status = 404;
     throw error;
   }
 
-  return mapLeadDetail(lead as any);
+  return mapLeadToDetail(lead);
 }
 
+/**
+ * Update a lead and return the updated detail.
+ */
 export async function updateLead(
-  orgId: string,
+  organizationId: string,
   leadId: string,
-  payload: UpdateLeadRequestDto,
+  payload: UpdateLeadRequestDto
 ): Promise<LeadDetailDto> {
+  // Ensure the lead belongs to this organization
   const existing = await prisma.lead.findFirst({
-    where: { id: leadId, organizationId: orgId },
-  });
-
-  if (!existing) {
-    const error = new Error("Lead not found");
-    (error as any).status = 404;
-    throw error;
-  }
-
-  const data: Prisma.LeadUpdateInput = {};
-
-  if (payload.firstName !== undefined) data.firstName = payload.firstName;
-  if (payload.lastName !== undefined) data.lastName = payload.lastName;
-  if (payload.email !== undefined) data.email = payload.email;
-  if (payload.phone !== undefined) data.phonePrimary = payload.phone;
-  if (payload.state !== undefined) data.state = payload.state ?? existing.state;
-  if (payload.zip !== undefined) data.zip = payload.zip ?? existing.zip;
-  if (payload.notes !== undefined) data.notesSummary = payload.notes;
-  if (payload.timezone !== undefined)
-    data.timeZone = payload.timezone ?? existing.timeZone;
-  if (payload.permissionToContactPhone !== undefined)
-    data.permissionToContactPhone = payload.permissionToContactPhone;
-  if (payload.assignedToId !== undefined)
-    data.assignedTo = payload.assignedToId
-      ? { connect: { id: payload.assignedToId } }
-      : { disconnect: true };
-
-  let nextStatus = payload.status ?? (existing.status as LeadStatus);
-  if (payload.doNotContact === true) {
-    nextStatus = LeadStatus.DO_NOT_CONTACT;
-  }
-
-  if (nextStatus !== undefined) {
-    data.status = nextStatus as any;
-  }
-
-  const updated = await prisma.lead.update({
-    where: { id: leadId },
-    data,
-    include: {
-      assignedTo: { select: { firstName: true, lastName: true } },
+    where: {
+      id: leadId,
+      organizationId,
     },
   });
 
-  return mapLeadDetail(updated as any);
+  if (!existing) {
+    const error: any = new Error("Lead not found");
+    error.status = 404;
+    throw error;
+  }
+
+  const updateData: any = {};
+
+  if (payload.firstName !== undefined) updateData.firstName = payload.firstName;
+  if (payload.lastName !== undefined) updateData.lastName = payload.lastName;
+  if (payload.email !== undefined) updateData.email = payload.email;
+  if (payload.phone !== undefined) updateData.phone = payload.phone;
+  if (payload.state !== undefined) updateData.state = payload.state;
+  if (payload.zip !== undefined) updateData.zip = payload.zip;
+  if (payload.status !== undefined) updateData.status = payload.status;
+  if (payload.notes !== undefined) updateData.notes = payload.notes;
+  if (payload.timezone !== undefined) updateData.timezone = payload.timezone;
+  if (payload.permissionToContactPhone !== undefined) {
+    updateData.permissionToContactPhone = payload.permissionToContactPhone;
+  }
+  if (payload.doNotContact !== undefined) {
+    updateData.doNotContact = payload.doNotContact;
+  }
+  if (payload.assignedToId !== undefined) {
+    updateData.assignedToId = payload.assignedToId;
+  }
+
+  const lead = await prisma.lead.update({
+    where: { id: leadId },
+    data: updateData,
+  });
+
+  return mapLeadToDetail(lead);
 }
+

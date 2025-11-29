@@ -1,18 +1,70 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  LeadDetailDto,
-  LeadStatus,
-  UpdateLeadRequestDto,
-} from "@elysium-crm/shared-types/dto/lead";
-import {
-  PlannedCallPurpose,
-  PreCallCheckResultDto,
-} from "@elysium-crm/shared-types/dto/compliance";
-
 import { getLeadById, runPreCallCheck, updateLead } from "../../lib/apiClient";
 
-const statusOptions = Object.values(LeadStatus);
+// Local types (mirror the API payloads) so we don't depend on shared-types.
+
+type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
+
+interface LeadDetail {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  state: string | null;
+  zip: string | null;
+  status: LeadStatus;
+  notes: string | null;
+  timezone: string | null;
+  permissionToContactPhone: boolean;
+  doNotContact: boolean;
+  createdAt: string;
+  updatedAt: string;
+  assignedToId: string | null;
+  assignedToName: string | null;
+}
+
+interface UpdateLeadRequest {
+  firstName?: string;
+  lastName?: string;
+  email?: string | null;
+  phone?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  status?: LeadStatus;
+  notes?: string | null;
+  timezone?: string | null;
+  permissionToContactPhone?: boolean;
+  doNotContact?: boolean;
+  assignedToId?: string | null;
+}
+
+type PlannedCallPurpose =
+  | "EDUCATION"
+  | "MARKETING"
+  | "ENROLLMENT"
+  | "SERVICE";
+
+type PreCallCheckStatus = "PASS" | "FAIL";
+
+interface PreCallCheckResult {
+  status: PreCallCheckStatus;
+  reasons: string[];
+  checks: {
+    type: string;
+    status: "PASS" | "FAIL" | "SKIPPED";
+    message?: string;
+  }[];
+}
+
+const statusOptions: LeadStatus[] = [
+  "NEW",
+  "IN_PROGRESS",
+  "ENROLLED",
+  "DO_NOT_CONTACT",
+];
+
 const purposeOptions: PlannedCallPurpose[] = [
   "EDUCATION",
   "MARKETING",
@@ -23,8 +75,9 @@ const purposeOptions: PlannedCallPurpose[] = [
 const LeadDetailPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [lead, setLead] = useState<LeadDetailDto | null>(null);
-  const [form, setForm] = useState<UpdateLeadRequestDto>({});
+
+  const [lead, setLead] = useState<LeadDetail | null>(null);
+  const [form, setForm] = useState<UpdateLeadRequest>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +85,11 @@ const LeadDetailPage: React.FC = () => {
 
   const [purpose, setPurpose] = useState<PlannedCallPurpose>("EDUCATION");
   const [complianceResult, setComplianceResult] =
-    useState<PreCallCheckResultDto | null>(null);
+    useState<PreCallCheckResult | null>(null);
   const [complianceLoading, setComplianceLoading] = useState(false);
   const [complianceError, setComplianceError] = useState<string | null>(null);
 
-  const syncFormFromLead = (data: LeadDetailDto) => {
+  const syncFormFromLead = (data: LeadDetail) => {
     setForm({
       firstName: data.firstName,
       lastName: data.lastName,
@@ -54,18 +107,20 @@ const LeadDetailPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!id) return;
+
     const fetchLead = async () => {
-      if (!id) return;
       setLoading(true);
       setError(null);
       try {
-        const data = await getLeadById(id);
+        const data = (await getLeadById(id)) as LeadDetail;
         setLead(data);
         syncFormFromLead(data);
         setPurpose("EDUCATION");
         setComplianceResult(null);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to load lead";
+      } catch (err: any) {
+        const message =
+          err instanceof Error ? err.message : "Failed to load lead";
         setError(message);
       } finally {
         setLoading(false);
@@ -75,26 +130,28 @@ const LeadDetailPage: React.FC = () => {
     void fetchLead();
   }, [id]);
 
-  const updateField = <K extends keyof UpdateLeadRequestDto>(
-    key: K,
-    value: UpdateLeadRequestDto[K],
-  ) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  };
+  const updateField =
+    <K extends keyof UpdateLeadRequest>(key: K) =>
+    (value: UpdateLeadRequest[K]) => {
+      setForm((prev) => ({ ...prev, [key]: value }));
+    };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id) return;
+
     setSaving(true);
     setSaveMessage(null);
     setError(null);
+
     try {
-      const updated = await updateLead(id, form);
+      const updated = (await updateLead(id, form)) as LeadDetail;
       setLead(updated);
       syncFormFromLead(updated);
       setSaveMessage("Saved");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save lead";
+    } catch (err: any) {
+      const message =
+        err instanceof Error ? err.message : "Failed to save lead";
       setError(message);
     } finally {
       setSaving(false);
@@ -103,14 +160,20 @@ const LeadDetailPage: React.FC = () => {
 
   const handleComplianceCheck = async () => {
     if (!id) return;
+
     setComplianceLoading(true);
     setComplianceError(null);
     setComplianceResult(null);
+
     try {
-      const result = await runPreCallCheck({ leadId: id, purpose });
+      const result = (await runPreCallCheck({
+        leadId: id,
+        purpose,
+      })) as PreCallCheckResult;
       setComplianceResult(result);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to run check";
+    } catch (err: any) {
+      const message =
+        err instanceof Error ? err.message : "Failed to run check";
       setComplianceError(message);
     } finally {
       setComplianceLoading(false);
@@ -125,7 +188,10 @@ const LeadDetailPage: React.FC = () => {
     return (
       <div style={{ padding: "1.5rem" }}>
         <p style={{ color: "red" }}>{error}</p>
-        <button onClick={() => navigate(-1)} style={{ marginTop: "0.5rem" }}>
+        <button
+          onClick={() => navigate(-1)}
+          style={{ marginTop: "0.5rem" }}
+        >
           Go back
         </button>
       </div>
@@ -138,16 +204,25 @@ const LeadDetailPage: React.FC = () => {
 
   return (
     <div style={{ padding: "1.5rem", display: "grid", gap: "1.5rem" }}>
-      <header style={{ display: "flex", justifyContent: "space-between" }}>
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
         <div>
           <h1>
             {lead.firstName} {lead.lastName}
           </h1>
-          <p style={{ color: "#6b7280" }}>Status: {lead.status.replace(/_/g, " ")}</p>
-          <p style={{ color: "#6b7280" }}>
+          <p style={{ color: "#6B7280" }}>
+            Status: {lead.status.replace(/_/g, " ")}
+          </p>
+          <p style={{ color: "#6B7280" }}>
             Assigned to: {lead.assignedToName ?? "Unassigned"}
           </p>
         </div>
+        <button onClick={() => navigate(-1)}>Back to leads</button>
       </header>
 
       <section
@@ -158,7 +233,10 @@ const LeadDetailPage: React.FC = () => {
         }}
       >
         <h2>Lead details</h2>
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.75rem", maxWidth: 720 }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: "grid", gap: "0.75rem", maxWidth: 720 }}
+        >
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <div style={{ flex: 1 }}>
               <label htmlFor="firstName" style={{ display: "block", marginBottom: 4 }}>
@@ -168,8 +246,13 @@ const LeadDetailPage: React.FC = () => {
                 id="firstName"
                 type="text"
                 value={form.firstName ?? ""}
-                onChange={(e) => updateField("firstName", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("firstName")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
             <div style={{ flex: 1 }}>
@@ -180,8 +263,13 @@ const LeadDetailPage: React.FC = () => {
                 id="lastName"
                 type="text"
                 value={form.lastName ?? ""}
-                onChange={(e) => updateField("lastName", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("lastName")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
           </div>
@@ -195,8 +283,13 @@ const LeadDetailPage: React.FC = () => {
                 id="email"
                 type="email"
                 value={form.email ?? ""}
-                onChange={(e) => updateField("email", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("email")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
             <div style={{ flex: 1 }}>
@@ -207,8 +300,13 @@ const LeadDetailPage: React.FC = () => {
                 id="phone"
                 type="tel"
                 value={form.phone ?? ""}
-                onChange={(e) => updateField("phone", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("phone")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
           </div>
@@ -222,8 +320,13 @@ const LeadDetailPage: React.FC = () => {
                 id="state"
                 type="text"
                 value={form.state ?? ""}
-                onChange={(e) => updateField("state", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("state")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
             <div style={{ flex: 1 }}>
@@ -234,8 +337,13 @@ const LeadDetailPage: React.FC = () => {
                 id="zip"
                 type="text"
                 value={form.zip ?? ""}
-                onChange={(e) => updateField("zip", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("zip")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
           </div>
@@ -249,8 +357,13 @@ const LeadDetailPage: React.FC = () => {
                 id="timezone"
                 type="text"
                 value={form.timezone ?? ""}
-                onChange={(e) => updateField("timezone", e.target.value)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                onChange={(e) => updateField("timezone")(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               />
             </div>
             <div style={{ flex: 1 }}>
@@ -259,9 +372,16 @@ const LeadDetailPage: React.FC = () => {
               </label>
               <select
                 id="status"
-                value={form.status ?? LeadStatus.NEW}
-                onChange={(e) => updateField("status", e.target.value as LeadStatus)}
-                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+                value={form.status ?? "NEW"}
+                onChange={(e) =>
+                  updateField("status")(e.target.value as LeadStatus)
+                }
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 4,
+                  border: "1px solid #ccc",
+                }}
               >
                 {statusOptions.map((option) => (
                   <option key={option} value={option}>
@@ -279,32 +399,50 @@ const LeadDetailPage: React.FC = () => {
             <textarea
               id="notes"
               value={form.notes ?? ""}
-              onChange={(e) => updateField("notes", e.target.value)}
+              onChange={(e) => updateField("notes")(e.target.value)}
               rows={4}
-              style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+              style={{
+                width: "100%",
+                padding: 8,
+                borderRadius: 4,
+                border: "1px solid #ccc",
+              }}
             />
           </div>
 
           <div style={{ display: "flex", gap: "1.5rem" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <label
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+            >
               <input
                 type="checkbox"
-                checked={Boolean(form.permissionToContactPhone)}
-                onChange={(e) => updateField("permissionToContactPhone", e.target.checked)}
+                checked={!!form.permissionToContactPhone}
+                onChange={(e) =>
+                  updateField("permissionToContactPhone")(e.target.checked)
+                }
               />
               Permission to contact by phone
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <label
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+            >
               <input
                 type="checkbox"
-                checked={Boolean(form.doNotContact)}
-                onChange={(e) => updateField("doNotContact", e.target.checked)}
+                checked={!!form.doNotContact}
+                onChange={(e) => updateField("doNotContact")(e.target.checked)}
               />
               Do not contact
             </label>
           </div>
 
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "0.75rem",
+              alignItems: "center",
+              marginTop: "0.5rem",
+            }}
+          >
             <button
               type="submit"
               disabled={saving}
@@ -314,12 +452,14 @@ const LeadDetailPage: React.FC = () => {
                 border: "none",
                 backgroundColor: "#2563eb",
                 color: "white",
-                cursor: "pointer",
+                cursor: saving ? "default" : "pointer",
               }}
             >
               {saving ? "Saving..." : "Save changes"}
             </button>
-            {saveMessage && <span style={{ color: "green" }}>{saveMessage}</span>}
+            {saveMessage && (
+              <span style={{ color: "green" }}>{saveMessage}</span>
+            )}
           </div>
         </form>
       </section>
@@ -332,11 +472,24 @@ const LeadDetailPage: React.FC = () => {
         }}
       >
         <h2>Pre-call compliance check</h2>
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginTop: "0.5rem" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "0.75rem",
+            alignItems: "center",
+            marginTop: "0.5rem",
+          }}
+        >
           <select
             value={purpose}
-            onChange={(e) => setPurpose(e.target.value as PlannedCallPurpose)}
-            style={{ padding: "0.5rem", borderRadius: 4, border: "1px solid #ccc" }}
+            onChange={(e) =>
+              setPurpose(e.target.value as PlannedCallPurpose)
+            }
+            style={{
+              padding: "0.5rem",
+              borderRadius: 4,
+              border: "1px solid #ccc",
+            }}
           >
             {purposeOptions.map((p) => (
               <option key={p} value={p}>
@@ -353,20 +506,26 @@ const LeadDetailPage: React.FC = () => {
               border: "none",
               backgroundColor: "#111827",
               color: "white",
-              cursor: "pointer",
+              cursor: complianceLoading ? "default" : "pointer",
             }}
           >
             {complianceLoading ? "Checking..." : "Run check"}
           </button>
         </div>
+
         {complianceError && (
-          <p style={{ color: "red", marginTop: "0.5rem" }}>{complianceError}</p>
+          <p style={{ color: "red", marginTop: "0.5rem" }}>
+            {complianceError}
+          </p>
         )}
+
         {complianceResult && (
           <div style={{ marginTop: "0.75rem" }}>
             <p>
-              Overall status: <strong>{complianceResult.status}</strong>
+              Overall status:{" "}
+              <strong>{complianceResult.status}</strong>
             </p>
+
             {complianceResult.reasons.length > 0 && (
               <ul>
                 {complianceResult.reasons.map((reason, idx) => (
@@ -374,6 +533,7 @@ const LeadDetailPage: React.FC = () => {
                 ))}
               </ul>
             )}
+
             <div style={{ marginTop: "0.5rem" }}>
               {complianceResult.checks.map((check) => (
                 <div
@@ -386,7 +546,7 @@ const LeadDetailPage: React.FC = () => {
                   }}
                 >
                   <div>
-                    <strong>{check.type}:</strong> {check.status}
+                    <strong>{check.type}</strong>: {check.status}
                   </div>
                   {check.message && <div>{check.message}</div>}
                 </div>

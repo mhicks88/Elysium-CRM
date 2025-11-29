@@ -1,0 +1,228 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const client_1 = require("@prisma/client");
+const bcrypt_1 = __importDefault(require("bcrypt"));
+const prisma = new client_1.PrismaClient();
+async function main() {
+    const passwordHash = await bcrypt_1.default.hash('Password123!', 10);
+    const org = await prisma.organization.upsert({
+        where: { id: 'demo-org' },
+        update: {},
+        create: {
+            id: 'demo-org',
+            name: 'Demo Organization',
+            settings: {}
+        }
+    });
+    const admin = await prisma.user.upsert({
+        where: { email: 'admin@example.com' },
+        update: {},
+        create: {
+            organizationId: org.id,
+            firstName: 'Admin',
+            lastName: 'User',
+            email: 'admin@example.com',
+            passwordHash,
+            role: client_1.UserRole.ADMIN,
+            isActive: true
+        }
+    });
+    const agent = await prisma.user.upsert({
+        where: { email: 'agent@example.com' },
+        update: {},
+        create: {
+            organizationId: org.id,
+            firstName: 'Agent',
+            lastName: 'User',
+            email: 'agent@example.com',
+            passwordHash,
+            role: client_1.UserRole.AGENT,
+            isActive: true
+        }
+    });
+    await prisma.lead.createMany({
+        data: [
+            {
+                organizationId: org.id,
+                firstName: 'DoNot',
+                lastName: 'Contact',
+                dateOfBirth: new Date('1950-01-01'),
+                phonePrimary: '555-0001',
+                phoneAlt: null,
+                email: 'donot@example.com',
+                addressLine1: '123 No Call St',
+                addressLine2: null,
+                city: 'Austin',
+                state: 'TX',
+                zip: '73301',
+                timeZone: 'America/Chicago',
+                leadSource: client_1.LeadSource.LIST,
+                permissionToContactPhone: false,
+                permissionToContactEmail: true,
+                permissionSource: 'seed',
+                permissionCapturedAt: new Date(),
+                status: client_1.LeadStatus.DO_NOT_CONTACT,
+                assignedToUserId: agent.id,
+                notesSummary: 'Seed lead marked DNC'
+            },
+            {
+                organizationId: org.id,
+                firstName: 'NoPhone',
+                lastName: 'Permission',
+                dateOfBirth: new Date('1955-02-02'),
+                phonePrimary: '555-0002',
+                phoneAlt: null,
+                email: 'noperm@example.com',
+                addressLine1: '456 Opt Out Ave',
+                addressLine2: null,
+                city: 'Dallas',
+                state: 'TX',
+                zip: '75001',
+                timeZone: 'America/Chicago',
+                leadSource: client_1.LeadSource.WEB_FORM,
+                permissionToContactPhone: false,
+                permissionToContactEmail: true,
+                permissionSource: 'seed',
+                permissionCapturedAt: new Date(),
+                status: client_1.LeadStatus.NEW,
+                assignedToUserId: agent.id,
+                notesSummary: 'Phone contact not permitted'
+            },
+            {
+                organizationId: org.id,
+                firstName: 'Contact',
+                lastName: 'Ready',
+                dateOfBirth: new Date('1958-03-03'),
+                phonePrimary: '555-0003',
+                phoneAlt: null,
+                email: 'ready@example.com',
+                addressLine1: '789 Ready Rd',
+                addressLine2: null,
+                city: 'Houston',
+                state: 'TX',
+                zip: '77001',
+                timeZone: 'America/Chicago',
+                leadSource: client_1.LeadSource.REFERRAL,
+                permissionToContactPhone: true,
+                permissionToContactEmail: true,
+                permissionSource: 'seed',
+                permissionCapturedAt: new Date(),
+                status: client_1.LeadStatus.SOA_REQUIRED,
+                assignedToUserId: agent.id,
+                notesSummary: 'Ready for outreach'
+            }
+        ]
+    });
+    const dialerIntegration = await prisma.dialerIntegration.create({
+        data: {
+            organizationId: org.id,
+            name: 'Generic HTTP Dialer',
+            type: client_1.DialerIntegrationType.GENERIC_HTTP,
+            baseUrl: 'https://dialer.example.com',
+            apiKey: 'changeme',
+            settings: {
+                startCallEndpoint: '/start',
+                endCallEndpoint: '/end',
+                webhookAuthHeader: 'x-webhook-signature',
+                webhookSecret: 'changeme',
+                phoneFieldPath: 'lead.phone',
+                externalCallIdPath: 'call.id',
+                eventTypePath: 'event.type',
+                eventTypeMappings: {}
+            }
+        }
+    });
+    const script = await prisma.script.create({
+        data: {
+            organizationId: org.id,
+            key: 'FEDERAL_CONTRACTING_STATEMENT',
+            name: 'Federal contracting statement',
+            description: 'Placeholder pending CMS-approved language',
+            category: client_1.ScriptCategory.DISCLAIMER,
+            applicableProductTypes: ['MA', 'MAPD'],
+            steps: {
+                create: [
+                    { order: 1, key: 'INTRO', content: 'TODO: intro disclosure text pending legal review.', isRequired: true },
+                    { order: 2, key: 'BENEFITS', content: 'TODO: benefits discussion guardrails.', isRequired: false }
+                ]
+            }
+        }
+    });
+    await prisma.scopeOfAppointment.create({
+        data: {
+            organizationId: org.id,
+            leadId: (await prisma.lead.findFirst({ where: { email: 'ready@example.com' } })).id,
+            agentId: agent.id,
+            callSessionId: null,
+            appointmentDate: new Date(),
+            channel: client_1.ScopeOfAppointmentChannel.TELEPHONIC,
+            productTypes: ['MA', 'MAPD'],
+            statementAcknowledged: true,
+            signatureMethod: client_1.ScopeOfAppointmentSignatureMethod.ELECTRONIC,
+            signatureEvidenceUrl: 'https://example.com/soa',
+            status: client_1.ScopeOfAppointmentStatus.SIGNED,
+            signedAt: new Date(),
+            expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365)
+        }
+    });
+    await prisma.task.create({
+        data: {
+            organizationId: org.id,
+            leadId: (await prisma.lead.findFirst({ where: { email: 'ready@example.com' } })).id,
+            assignedToUserId: agent.id,
+            type: client_1.TaskType.CALL_BACK,
+            status: client_1.TaskStatus.OPEN,
+            priority: client_1.TaskPriority.MEDIUM,
+            title: 'Call ready lead',
+            description: 'Confirm SOA and proceed with disclosures',
+            dueAt: new Date(Date.now() + 1000 * 60 * 60 * 24)
+        }
+    });
+    const callSession = await prisma.callSession.create({
+        data: {
+            organizationId: org.id,
+            leadId: (await prisma.lead.findFirst({ where: { email: 'ready@example.com' } })).id,
+            agentId: agent.id,
+            dialerIntegrationId: dialerIntegration.id,
+            externalCallId: 'seed-call-1',
+            direction: client_1.CallDirection.OUTBOUND,
+            purpose: client_1.CallPurpose.MARKETING,
+            status: client_1.CallStatus.INITIATED,
+            complianceState: client_1.ComplianceState.SOA_COMPLETED
+        }
+    });
+    await prisma.enrollment.create({
+        data: {
+            organizationId: org.id,
+            leadId: callSession.leadId,
+            agentId: agent.id,
+            callSessionId: callSession.id,
+            planNameOrId: 'Demo Plan',
+            effectiveDate: new Date(),
+            status: client_1.EnrollmentStatus.SUBMITTED
+        }
+    });
+    await prisma.enrollmentVerification.create({
+        data: {
+            enrollmentId: (await prisma.enrollment.findFirst({ where: { leadId: callSession.leadId } })).id,
+            method: client_1.EnrollmentVerificationMethod.PHONE,
+            contactDetail: callSession.leadId,
+            initiatedAt: new Date(),
+            completedAt: null,
+            outcome: client_1.EnrollmentVerificationOutcome.PENDING,
+            notes: 'Pending verification'
+        }
+    });
+}
+main()
+    .then(async () => {
+    await prisma.$disconnect();
+})
+    .catch(async (e) => {
+    console.error(e);
+    await prisma.$disconnect();
+    process.exit(1);
+});

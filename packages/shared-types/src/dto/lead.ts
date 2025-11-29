@@ -1,7 +1,5 @@
 import { LeadStatus } from "../enums";
 
-export { LeadStatus };
-
 export interface LeadListItemDto {
   id: string;
   firstName: string;
@@ -55,3 +53,4 @@ export interface UpdateLeadRequestDto {
   doNotContact?: boolean;
   assignedToId?: string | null;
 }
+

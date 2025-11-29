@@ -1,27 +1,21 @@
-import { UserRole } from '../enums';
+// packages/shared-types/src/dto/auth.ts
 
 export interface LoginRequestDto {
-export interface LoginRequest {
   email: string;
   password: string;
 }
 
 export interface AuthUserDto {
   id: string;
-  organizationId: string;
+  email: string;
   firstName: string;
   lastName: string;
-export interface AuthUser {
-  id: string;
+  role: string;
   organizationId: string;
-  email: string;
-  role: UserRole;
 }
 
 export interface LoginResponseDto {
   token: string;
   user: AuthUserDto;
-export interface LoginResponse {
-  token: string;
-  user: AuthUser;
 }
+
