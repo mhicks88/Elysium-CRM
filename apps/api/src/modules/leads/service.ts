@@ -8,6 +8,7 @@ import {
   LeadDetailDto,
   UpdateLeadRequestDto,
 } from "@elysium-crm/shared-types";
+import type { Lead, Prisma } from "@prisma/client";
 
 export interface ListLeadsParams {
   page?: number;
@@ -17,46 +18,44 @@ export interface ListLeadsParams {
 }
 
 /**
- * Map a Lead Prisma record into a LeadListItemDto.
- * This version does NOT assume any relations are present,
- * so assignedToName is left as null for now.
+ * Map a Prisma Lead record into a LeadListItemDto.
  */
-function mapLeadToListItem(lead: any): LeadListItemDto {
+function mapLeadToListItem(lead: Lead): LeadListItemDto {
   return {
     id: lead.id,
     firstName: lead.firstName,
     lastName: lead.lastName,
     email: lead.email ?? null,
-    phone: lead.phone ?? null,
+    phone: lead.phonePrimary ?? lead.phoneAlt ?? null,
     state: lead.state ?? null,
     status: lead.status as LeadStatus,
     createdAt: lead.createdAt.toISOString(),
     updatedAt: lead.updatedAt.toISOString(),
-    assignedToName: null, // TODO: map from relation if/when you expose it
+    assignedToName: null, // TODO: map from lead.assignedTo when we include that relation
   };
 }
 
 /**
- * Map a Lead Prisma record into a LeadDetailDto.
+ * Map a Prisma Lead record into a LeadDetailDto.
  */
-function mapLeadToDetail(lead: any): LeadDetailDto {
+function mapLeadToDetail(lead: Lead): LeadDetailDto {
   return {
     id: lead.id,
     firstName: lead.firstName,
     lastName: lead.lastName,
     email: lead.email ?? null,
-    phone: lead.phone ?? null,
+    phone: lead.phonePrimary ?? lead.phoneAlt ?? null,
     state: lead.state ?? null,
     zip: lead.zip ?? null,
     status: lead.status as LeadStatus,
-    notes: lead.notes ?? null,
-    timezone: lead.timezone ?? null,
+    notes: lead.notesSummary ?? null,
+    timezone: lead.timeZone ?? null,
     permissionToContactPhone: !!lead.permissionToContactPhone,
-    doNotContact: !!lead.doNotContact,
+    doNotContact: lead.status === "DO_NOT_CONTACT",
     createdAt: lead.createdAt.toISOString(),
     updatedAt: lead.updatedAt.toISOString(),
-    assignedToId: lead.assignedToId ?? null,
-    assignedToName: null, // TODO: map from relation if/when you expose it
+    assignedToId: lead.assignedToUserId ?? null,
+    assignedToName: null, // TODO: map from relation when needed
   };
 }
 
@@ -71,12 +70,12 @@ export async function listLeads(
   const pageSize =
     params.pageSize && params.pageSize > 0 ? params.pageSize : 25;
 
-  const where: any = {
+  const where: Prisma.LeadWhereInput = {
     organizationId,
   };
 
   if (params.status && params.status !== "ALL") {
-    where.status = params.status;
+    where.status = params.status as any;
   }
 
   if (params.search) {
@@ -86,7 +85,8 @@ export async function listLeads(
         { firstName: { contains: search, mode: "insensitive" } },
         { lastName: { contains: search, mode: "insensitive" } },
         { email: { contains: search, mode: "insensitive" } },
-        { phone: { contains: search, mode: "insensitive" } },
+        { phonePrimary: { contains: search, mode: "insensitive" } },
+        { phoneAlt: { contains: search, mode: "insensitive" } },
       ];
     }
   }
@@ -156,25 +156,70 @@ export async function updateLead(
     throw error;
   }
 
-  const updateData: any = {};
+  const updateData: Prisma.LeadUncheckedUpdateInput = {};
 
-  if (payload.firstName !== undefined) updateData.firstName = payload.firstName;
-  if (payload.lastName !== undefined) updateData.lastName = payload.lastName;
-  if (payload.email !== undefined) updateData.email = payload.email;
-  if (payload.phone !== undefined) updateData.phone = payload.phone;
-  if (payload.state !== undefined) updateData.state = payload.state;
-  if (payload.zip !== undefined) updateData.zip = payload.zip;
-  if (payload.status !== undefined) updateData.status = payload.status;
-  if (payload.notes !== undefined) updateData.notes = payload.notes;
-  if (payload.timezone !== undefined) updateData.timezone = payload.timezone;
+  if (payload.firstName !== undefined) {
+    updateData.firstName = payload.firstName;
+  }
+
+  if (payload.lastName !== undefined) {
+    updateData.lastName = payload.lastName;
+  }
+
+  if (payload.email !== undefined) {
+    updateData.email = payload.email;
+  }
+
+  if (payload.phone !== undefined) {
+    if (payload.phone === null) {
+      updateData.phonePrimary = existing.phonePrimary;
+    } else {
+      updateData.phonePrimary = payload.phone;
+    }
+  }
+
+  if (payload.state !== undefined) {
+    if (payload.state === null) {
+      updateData.state = existing.state;
+    } else {
+      updateData.state = payload.state;
+    }
+  }
+
+  if (payload.zip !== undefined) {
+    if (payload.zip === null) {
+      updateData.zip = existing.zip;
+    } else {
+      updateData.zip = payload.zip;
+    }
+  }
+
+  if (payload.notes !== undefined) {
+    updateData.notesSummary = payload.notes;
+  }
+
+  if (payload.timezone !== undefined) {
+    if (payload.timezone === null) {
+      updateData.timeZone = existing.timeZone;
+    } else {
+      updateData.timeZone = payload.timezone;
+    }
+  }
+
   if (payload.permissionToContactPhone !== undefined) {
     updateData.permissionToContactPhone = payload.permissionToContactPhone;
   }
-  if (payload.doNotContact !== undefined) {
-    updateData.doNotContact = payload.doNotContact;
-  }
+
   if (payload.assignedToId !== undefined) {
-    updateData.assignedToId = payload.assignedToId;
+    updateData.assignedToUserId = payload.assignedToId;
+  }
+
+  if (payload.status !== undefined) {
+    updateData.status = payload.status as any;
+  } else if (payload.doNotContact !== undefined) {
+    if (payload.doNotContact && existing.status !== "DO_NOT_CONTACT") {
+      updateData.status = "DO_NOT_CONTACT";
+    }
   }
 
   const lead = await prisma.lead.update({

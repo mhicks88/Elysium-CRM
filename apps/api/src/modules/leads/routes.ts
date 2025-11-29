@@ -32,6 +32,7 @@ leadsRouter.get("/", async (req, res, next) => {
 
   const { page, pageSize, search } = req.query;
   const statusParam = (req.query.status as string) ?? "ALL";
+
   const validStatuses = new Set<string>([
     "ALL",
     ...Object.values(LeadStatus),
