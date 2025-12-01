@@ -4,6 +4,7 @@ import { Router } from "express";
 import {
   LeadStatus,
   UpdateLeadRequestDto,
+  CreateLeadRequestDto,
 } from "@elysium-crm/shared-types";
 import {
   AuthenticatedRequest,
@@ -13,12 +14,41 @@ import {
   listLeads,
   getLeadById,
   updateLead,
+  createLead,
 } from "./service";
 
 export const leadsRouter = Router();
 
 // All routes require auth
 leadsRouter.use(requireAuth);
+
+// POST /api/leads
+leadsRouter.post("/", async (req, res, next) => {
+  const authReq = req as AuthenticatedRequest;
+  const user = authReq.user;
+
+  if (!user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const payload = req.body as CreateLeadRequestDto;
+
+  // Minimal validation for now; can be tightened later.
+  if (!payload.firstName || !payload.lastName || !payload.phone) {
+    res.status(400).json({
+      error: "Missing required fields: firstName, lastName, phone",
+    });
+    return;
+  }
+
+  try {
+    const lead = await createLead(user.organizationId, payload);
+    res.status(201).json(lead);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/leads
 leadsRouter.get("/", async (req, res, next) => {

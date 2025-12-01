@@ -1,3 +1,5 @@
+// apps/web/src/lib/apiClient.ts
+
 import type {
   LoginRequestDto,
   LoginResponseDto,
@@ -11,6 +13,7 @@ import type {
   LeadListResponseDto,
   LeadStatus,
   UpdateLeadRequestDto,
+  CreateLeadRequestDto,
 } from "@elysium-crm/shared-types/dto/lead";
 import { readStoredToken } from "./auth";
 
@@ -41,7 +44,7 @@ async function request<T>(
     let message = `Request failed with status ${res.status}`;
     try {
       const body = await res.json();
-      message = body?.error?.message ?? message;
+      message = body?.error?.message ?? body?.error ?? message;
     } catch {
       // ignore JSON parse errors
     }
@@ -64,7 +67,7 @@ export async function login(
 }
 
 /**
- * Compliance: run pre-call check (placeholder for later)
+ * Compliance: run pre-call check
  */
 export async function runPreCallCheck(params: {
   leadId: string;
@@ -104,10 +107,19 @@ export async function getLeadById(id: string): Promise<LeadDetailDto> {
 
 export async function updateLead(
   id: string,
-  payload: UpdateLeadRequestDto,
+  payload: UpdateLeadRequestDto
 ): Promise<LeadDetailDto> {
   return request<LeadDetailDto>(`/api/leads/${id}`, {
     method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createLead(
+  payload: CreateLeadRequestDto
+): Promise<LeadDetailDto> {
+  return request<LeadDetailDto>("/api/leads", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }

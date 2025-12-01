@@ -99,6 +99,19 @@ const LeadsPage: React.FC = () => {
         }}
       >
         <h1>Elysium CRM – Leads</h1>
+        <Link
+          to="/leads/new"
+          style={{
+            padding: "0.5rem 1rem",
+            borderRadius: 4,
+            backgroundColor: "#2563eb",
+            color: "white",
+            textDecoration: "none",
+            fontSize: 14,
+          }}
+        >
+          Create Lead
+        </Link>
       </header>
 
       <section
@@ -184,9 +197,7 @@ const LeadsPage: React.FC = () => {
       )}
 
       {error && (
-        <div style={{ padding: "1rem", color: "red" }}>
-          {error}
-        </div>
+        <div style={{ padding: "1rem", color: "red" }}>{error}</div>
       )}
 
       {!loading && !error && (
@@ -392,3 +403,4 @@ const LeadsPage: React.FC = () => {
 };
 
 export default LeadsPage;
+

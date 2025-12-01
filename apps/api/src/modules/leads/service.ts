@@ -7,6 +7,7 @@ import {
   LeadListItemDto,
   LeadDetailDto,
   UpdateLeadRequestDto,
+  CreateLeadRequestDto,
 } from "@elysium-crm/shared-types";
 import type { Lead, Prisma } from "@prisma/client";
 
@@ -130,6 +131,62 @@ export async function getLeadById(
     error.status = 404;
     throw error;
   }
+
+  return mapLeadToDetail(lead);
+}
+
+/**
+ * Create a new lead and return the detail DTO.
+ */
+export async function createLead(
+  organizationId: string,
+  payload: CreateLeadRequestDto
+): Promise<LeadDetailDto> {
+  const now = new Date();
+
+  const createData: Prisma.LeadUncheckedCreateInput = {
+    organizationId,
+    firstName: payload.firstName,
+    lastName: payload.lastName,
+
+    // TODO: wire this to real DOB once the UI collects it
+    dateOfBirth: new Date("1900-01-01T00:00:00.000Z"),
+
+    phonePrimary: payload.phone,
+    phoneAlt: null,
+    email: payload.email ?? null,
+
+    // These are required at DB level; we currently don't collect them in UI.
+    addressLine1: "Unknown",
+    addressLine2: null,
+    city: "Unknown",
+    state: payload.state ?? "Unknown",
+    zip: payload.zip ?? "",
+    timeZone: payload.timezone ?? "America/New_York",
+
+    leadSource: "OTHER" as any,
+    permissionToContactPhone: payload.permissionToContactPhone ?? false,
+    permissionToContactEmail: false,
+    permissionSource: "MANUAL_ENTRY",
+    permissionCapturedAt:
+      payload.permissionToContactPhone === true ? now : null,
+
+    // Prisma ENUM type, using string literal with cast:
+    status:
+      (payload.doNotContact === true
+        ? "DO_NOT_CONTACT"
+        : "NEW") as Prisma.LeadUncheckedCreateInput["status"],
+
+    assignedToUserId: payload.assignedToId ?? null,
+    notesSummary: payload.notes ?? null,
+
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const lead = await prisma.lead.create({
+    data: createData,
+  });
 
   return mapLeadToDetail(lead);
 }

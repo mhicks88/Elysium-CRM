@@ -1,4 +1,3 @@
-
 import React from "react";
 import {
   BrowserRouter,
@@ -12,6 +11,7 @@ import LoginPage from "./routes/auth";
 import CompliancePage from "./routes/compliance";
 import LeadsPage from "./routes/leads";
 import LeadDetailPage from "./routes/leads/LeadDetail";
+import NewLeadPage from "./routes/leads/NewLead";
 
 type ProtectedRouteProps = {
   children: React.ReactElement;
@@ -47,8 +47,9 @@ const AppShell: React.FC = () => {
       <Route path="/" element={<DashboardPage />} />
       <Route path="/compliance" element={<CompliancePage />} />
       <Route path="/leads" element={<LeadsPage />} />
+      <Route path="/leads/new" element={<NewLeadPage />} />
       <Route path="/leads/:id" element={<LeadDetailPage />} />
-      {/* Future: add /leads, /calls, etc. routes here */}
+      {/* Future: add /calls, /tasks, etc. routes here */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -1,11 +1,10 @@
+// packages/shared-types/src/index.ts
+
+// Re-export shared enums
 export * from "./enums";
-export { LeadStatus } from "./enums";
+
+// Re-export DTOs
 export * from "./dto/auth";
-export * from "./dto/lead";
 export * from "./dto/compliance";
-export * from "./dto/users";
-export * from "./dto/tasks";
-export * from "./dto/notes";
-export * from "./dto/calls";
-export * from "./dto/enrollment";
+export * from "./dto/lead";
 
