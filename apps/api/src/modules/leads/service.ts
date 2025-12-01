@@ -62,6 +62,7 @@ function mapLeadToDetail(lead: Lead): LeadDetailDto {
 
 /**
  * List leads for a given organization with basic pagination and filtering.
+ * (Restored to known-good behavior)
  */
 export async function listLeads(
   organizationId: string,
@@ -80,7 +81,8 @@ export async function listLeads(
   }
 
   if (params.search) {
-    const search = params.search.trim();
+    // Defensive trim + soft length cap
+    const search = params.search.trim().slice(0, 200);
     if (search.length > 0) {
       where.OR = [
         { firstName: { contains: search, mode: "insensitive" } },

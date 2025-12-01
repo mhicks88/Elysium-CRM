@@ -19,6 +19,14 @@ import {
 
 export const leadsRouter = Router();
 
+// Helper to safely parse optional integers from query params
+function parseOptionalInt(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) return undefined;
+  return parsed;
+}
+
 // All routes require auth
 leadsRouter.use(requireAuth);
 
@@ -60,8 +68,13 @@ leadsRouter.get("/", async (req, res, next) => {
     return;
   }
 
-  const { page, pageSize, search } = req.query;
-  const statusParam = (req.query.status as string) ?? "ALL";
+  // Safely parse query params
+  const page = parseOptionalInt(req.query.page);
+  const pageSize = parseOptionalInt(req.query.pageSize);
+  const rawSearch = typeof req.query.search === "string" ? req.query.search : undefined;
+  const search = rawSearch ? rawSearch.trim() : undefined;
+
+  const statusParam = (req.query.status as string | undefined) ?? "ALL";
 
   const validStatuses = new Set<string>([
     "ALL",
@@ -75,9 +88,9 @@ leadsRouter.get("/", async (req, res, next) => {
 
   try {
     const result = await listLeads(user.organizationId, {
-      page: page ? parseInt(page as string, 10) : undefined,
-      pageSize: pageSize ? parseInt(pageSize as string, 10) : undefined,
-      search: (search as string) || undefined,
+      page,
+      pageSize,
+      search,
       status: statusParam as LeadStatus | "ALL",
     });
 

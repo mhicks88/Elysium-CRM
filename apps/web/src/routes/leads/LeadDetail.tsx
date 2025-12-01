@@ -83,6 +83,9 @@ const LeadDetailPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [isDirty, setIsDirty] = useState(false); // tracks unsaved edits
+
   const [purpose, setPurpose] = useState<PlannedCallPurpose>("EDUCATION");
   const [complianceResult, setComplianceResult] =
     useState<PreCallCheckResult | null>(null);
@@ -118,6 +121,9 @@ const LeadDetailPage: React.FC = () => {
         syncFormFromLead(data);
         setPurpose("EDUCATION");
         setComplianceResult(null);
+        setIsEditing(false);
+        setIsDirty(false);
+        setSaveMessage(null);
       } catch (err: any) {
         const message =
           err instanceof Error ? err.message : "Failed to load lead";
@@ -134,11 +140,33 @@ const LeadDetailPage: React.FC = () => {
     <K extends keyof UpdateLeadRequest>(key: K) =>
     (value: UpdateLeadRequest[K]) => {
       setForm((prev) => ({ ...prev, [key]: value }));
+      if (isEditing) {
+        setIsDirty(true);
+      }
     };
+
+  const handleStartEdit = () => {
+    if (!lead) return;
+    syncFormFromLead(lead);
+    setSaveMessage(null);
+    setError(null);
+    setIsEditing(true);
+    setIsDirty(false);
+  };
+
+  const handleCancelEdit = () => {
+    if (!lead) return;
+    syncFormFromLead(lead);
+    setIsEditing(false);
+    setSaving(false);
+    setError(null);
+    setIsDirty(false);
+    // keep last "Saved" message if there was one
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!id) return;
+    if (!id || !isEditing) return;
 
     setSaving(true);
     setSaveMessage(null);
@@ -148,7 +176,9 @@ const LeadDetailPage: React.FC = () => {
       const updated = (await updateLead(id, form)) as LeadDetail;
       setLead(updated);
       syncFormFromLead(updated);
-      setSaveMessage("Saved");
+      setSaveMessage("Changes saved");
+      setIsEditing(false);
+      setIsDirty(false);
     } catch (err: any) {
       const message =
         err instanceof Error ? err.message : "Failed to save lead";
@@ -180,16 +210,48 @@ const LeadDetailPage: React.FC = () => {
     }
   };
 
+  const hasUnsavedChanges = isEditing && isDirty;
+
+  // Tab close / refresh protection
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [hasUnsavedChanges]);
+
+  const confirmNavigateAway = () => {
+    if (!hasUnsavedChanges) return true;
+    return window.confirm(
+      "You have unsaved changes. Are you sure you want to leave this page?"
+    );
+  };
+
+  const handleBackToLeads = () => {
+    if (!confirmNavigateAway()) return;
+    navigate(-1);
+  };
+
+  const handleErrorGoBack = () => {
+    if (!confirmNavigateAway()) return;
+    navigate(-1);
+  };
+
   if (loading) {
     return <div style={{ padding: "1.5rem" }}>Loading lead...</div>;
   }
 
-  if (error) {
+  if (error && !lead) {
     return (
       <div style={{ padding: "1.5rem" }}>
         <p style={{ color: "red" }}>{error}</p>
         <button
-          onClick={() => navigate(-1)}
+          onClick={handleErrorGoBack}
           style={{ marginTop: "0.5rem" }}
         >
           Go back
@@ -201,6 +263,9 @@ const LeadDetailPage: React.FC = () => {
   if (!lead) {
     return null;
   }
+
+  const inputBorder = isEditing ? "#2563eb" : "#ccc";
+  const inputBg = isEditing ? "#ffffff" : "#f9fafb";
 
   return (
     <div style={{ padding: "1.5rem", display: "grid", gap: "1.5rem" }}>
@@ -222,7 +287,9 @@ const LeadDetailPage: React.FC = () => {
             Assigned to: {lead.assignedToName ?? "Unassigned"}
           </p>
         </div>
-        <button onClick={() => navigate(-1)}>Back to leads</button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button onClick={handleBackToLeads}>Back to leads</button>
+        </div>
       </header>
 
       <section
@@ -232,14 +299,105 @@ const LeadDetailPage: React.FC = () => {
           borderRadius: 6,
         }}
       >
-        <h2>Lead details</h2>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "0.75rem",
+          }}
+        >
+          <h2>Lead details</h2>
+          {!isEditing ? (
+            <button
+              type="button"
+              onClick={handleStartEdit}
+              style={{
+                padding: "0.4rem 0.9rem",
+                borderRadius: 4,
+                border: "1px solid #2563eb",
+                backgroundColor: "#2563eb",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              Edit
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              style={{
+                padding: "0.4rem 0.9rem",
+                borderRadius: 4,
+                border: "1px solid #d1d5db",
+                backgroundColor: "#f9fafb",
+                color: "#374151",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              Cancel edit
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div
+            style={{
+              marginBottom: "0.75rem",
+              padding: "0.75rem",
+              borderRadius: 4,
+              backgroundColor: "#fee2e2",
+              color: "#b91c1c",
+              fontSize: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {saveMessage && !isEditing && (
+          <div
+            style={{
+              marginBottom: "0.75rem",
+              padding: "0.5rem 0.75rem",
+              borderRadius: 4,
+              backgroundColor: "#dcfce7",
+              color: "#166534",
+              fontSize: 13,
+            }}
+          >
+            {saveMessage}
+          </div>
+        )}
+
+        {hasUnsavedChanges && (
+          <div
+            style={{
+              marginBottom: "0.75rem",
+              padding: "0.5rem 0.75rem",
+              borderRadius: 4,
+              backgroundColor: "#fef9c3",
+              color: "#854d0e",
+              fontSize: 13,
+            }}
+          >
+            You have unsaved changes.
+          </div>
+        )}
+
         <form
           onSubmit={handleSubmit}
           style={{ display: "grid", gap: "0.75rem", maxWidth: 720 }}
         >
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <div style={{ flex: 1 }}>
-              <label htmlFor="firstName" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="firstName"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 First name
               </label>
               <input
@@ -247,16 +405,21 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.firstName ?? ""}
                 onChange={(e) => updateField("firstName")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label htmlFor="lastName" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="lastName"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 Last name
               </label>
               <input
@@ -264,11 +427,13 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.lastName ?? ""}
                 onChange={(e) => updateField("lastName")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
@@ -276,7 +441,10 @@ const LeadDetailPage: React.FC = () => {
 
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <div style={{ flex: 1 }}>
-              <label htmlFor="email" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="email"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 Email
               </label>
               <input
@@ -284,16 +452,21 @@ const LeadDetailPage: React.FC = () => {
                 type="email"
                 value={form.email ?? ""}
                 onChange={(e) => updateField("email")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label htmlFor="phone" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="phone"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 Phone
               </label>
               <input
@@ -301,11 +474,13 @@ const LeadDetailPage: React.FC = () => {
                 type="tel"
                 value={form.phone ?? ""}
                 onChange={(e) => updateField("phone")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
@@ -313,7 +488,10 @@ const LeadDetailPage: React.FC = () => {
 
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <div style={{ flex: 1 }}>
-              <label htmlFor="state" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="state"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 State
               </label>
               <input
@@ -321,16 +499,21 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.state ?? ""}
                 onChange={(e) => updateField("state")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label htmlFor="zip" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="zip"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 ZIP
               </label>
               <input
@@ -338,11 +521,13 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.zip ?? ""}
                 onChange={(e) => updateField("zip")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
@@ -350,7 +535,10 @@ const LeadDetailPage: React.FC = () => {
 
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <div style={{ flex: 1 }}>
-              <label htmlFor="timezone" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="timezone"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 Timezone
               </label>
               <input
@@ -358,16 +546,21 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.timezone ?? ""}
                 onChange={(e) => updateField("timezone")(e.target.value)}
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label htmlFor="status" style={{ display: "block", marginBottom: 4 }}>
+              <label
+                htmlFor="status"
+                style={{ display: "block", marginBottom: 4 }}
+              >
                 Status
               </label>
               <select
@@ -376,11 +569,13 @@ const LeadDetailPage: React.FC = () => {
                 onChange={(e) =>
                   updateField("status")(e.target.value as LeadStatus)
                 }
+                disabled={!isEditing}
                 style={{
                   width: "100%",
                   padding: 8,
                   borderRadius: 4,
-                  border: "1px solid #ccc",
+                  border: `1px solid ${inputBorder}`,
+                  backgroundColor: inputBg,
                 }}
               >
                 {statusOptions.map((option) => (
@@ -393,7 +588,10 @@ const LeadDetailPage: React.FC = () => {
           </div>
 
           <div>
-            <label htmlFor="notes" style={{ display: "block", marginBottom: 4 }}>
+            <label
+              htmlFor="notes"
+              style={{ display: "block", marginBottom: 4 }}
+            >
               Notes
             </label>
             <textarea
@@ -401,11 +599,13 @@ const LeadDetailPage: React.FC = () => {
               value={form.notes ?? ""}
               onChange={(e) => updateField("notes")(e.target.value)}
               rows={4}
+              disabled={!isEditing}
               style={{
                 width: "100%",
                 padding: 8,
                 borderRadius: 4,
-                border: "1px solid #ccc",
+                border: `1px solid ${inputBorder}`,
+                backgroundColor: inputBg,
               }}
             />
           </div>
@@ -420,6 +620,7 @@ const LeadDetailPage: React.FC = () => {
                 onChange={(e) =>
                   updateField("permissionToContactPhone")(e.target.checked)
                 }
+                disabled={!isEditing}
               />
               Permission to contact by phone
             </label>
@@ -429,38 +630,55 @@ const LeadDetailPage: React.FC = () => {
               <input
                 type="checkbox"
                 checked={!!form.doNotContact}
-                onChange={(e) => updateField("doNotContact")(e.target.checked)}
+                onChange={(e) =>
+                  updateField("doNotContact")(e.target.checked)
+                }
+                disabled={!isEditing}
               />
               Do not contact
             </label>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              gap: "0.75rem",
-              alignItems: "center",
-              marginTop: "0.5rem",
-            }}
-          >
-            <button
-              type="submit"
-              disabled={saving}
+          {isEditing && (
+            <div
               style={{
-                padding: "0.6rem 1.25rem",
-                borderRadius: 4,
-                border: "none",
-                backgroundColor: "#2563eb",
-                color: "white",
-                cursor: saving ? "default" : "pointer",
+                display: "flex",
+                gap: "0.75rem",
+                alignItems: "center",
+                marginTop: "0.5rem",
               }}
             >
-              {saving ? "Saving..." : "Save changes"}
-            </button>
-            {saveMessage && (
-              <span style={{ color: "green" }}>{saveMessage}</span>
-            )}
-          </div>
+              <button
+                type="submit"
+                disabled={saving}
+                style={{
+                  padding: "0.6rem 1.25rem",
+                  borderRadius: 4,
+                  border: "none",
+                  backgroundColor: "#2563eb",
+                  color: "white",
+                  cursor: saving ? "default" : "pointer",
+                }}
+              >
+                {saving ? "Saving..." : "Save changes"}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                disabled={saving}
+                style={{
+                  padding: "0.6rem 1.1rem",
+                  borderRadius: 4,
+                  border: "1px solid #d1d5db",
+                  backgroundColor: "#f9fafb",
+                  color: "#374151",
+                  cursor: saving ? "default" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </form>
       </section>
 
@@ -560,3 +778,4 @@ const LeadDetailPage: React.FC = () => {
 };
 
 export default LeadDetailPage;
+

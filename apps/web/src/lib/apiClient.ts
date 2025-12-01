@@ -15,7 +15,7 @@ import type {
   UpdateLeadRequestDto,
   CreateLeadRequestDto,
 } from "@elysium-crm/shared-types/dto/lead";
-import { readStoredToken } from "./auth";
+import { readStoredToken, clearStoredAuth } from "./auth";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -42,13 +42,41 @@ async function request<T>(
 
   if (!res.ok) {
     let message = `Request failed with status ${res.status}`;
+    let body: any = null;
+
     try {
-      const body = await res.json();
-      message = body?.error?.message ?? body?.error ?? message;
+      body = await res.json();
+      message =
+        body?.error?.message ??
+        body?.error ??
+        body?.message ??
+        message;
     } catch {
       // ignore JSON parse errors
     }
-    throw new Error(message);
+
+    // Auto-logout flow: only if we *had* a token (i.e. not a failed login)
+    if (res.status === 401 && token) {
+      clearStoredAuth();
+      try {
+        // Avoid redirect loops if somehow already on /login
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login?reason=session_expired";
+        }
+      } catch {
+        // window might not exist in some environments; safe to ignore
+      }
+    }
+
+    const error = new Error(message) as Error & { status?: number; data?: any };
+    error.status = res.status;
+    error.data = body ?? undefined;
+    throw error;
+  }
+
+  // Some endpoints might return 204 No Content
+  if (res.status === 204) {
+    return undefined as T;
   }
 
   return (await res.json()) as T;

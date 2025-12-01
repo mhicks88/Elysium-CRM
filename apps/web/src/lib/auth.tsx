@@ -21,6 +21,15 @@ export const readStoredToken = (): string | null => {
   }
 };
 
+export const clearStoredAuth = (): void => {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch {
+    // ignore storage failures
+  }
+};
+
 export interface AuthUser extends AuthUserDto {}
 
 interface AuthContextValue {
@@ -76,12 +85,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = () => {
     setToken(null);
     setUser(null);
-    try {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
-    } catch {
-      // ignore storage failures
-    }
+    clearStoredAuth();
   };
 
   const value: AuthContextValue = {

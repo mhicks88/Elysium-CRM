@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../lib/auth";
 import { login as apiLogin } from "../../lib/apiClient";
 import type { LoginRequestDto } from "@elysium-crm/shared-types/dto/auth";
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
 
   const [form, setForm] = useState<LoginRequestDto>({
@@ -14,6 +15,11 @@ const LoginPage: React.FC = () => {
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Read `reason` query param (e.g. ?reason=session_expired)
+  const searchParams = new URLSearchParams(location.search);
+  const reason = searchParams.get("reason");
+  const sessionExpired = reason === "session_expired";
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -60,6 +66,21 @@ const LoginPage: React.FC = () => {
         }}
       >
         <h1 style={{ marginBottom: "1rem" }}>Elysium CRM Login</h1>
+
+        {sessionExpired && (
+          <div
+            style={{
+              marginBottom: "0.75rem",
+              padding: "0.75rem",
+              borderRadius: 4,
+              backgroundColor: "#fef9c3",
+              color: "#854d0e",
+              fontSize: 14,
+            }}
+          >
+            Your session has expired. Please sign in again.
+          </div>
+        )}
 
         {error && (
           <div
