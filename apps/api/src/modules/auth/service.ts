@@ -12,6 +12,13 @@ function getJwtSecret(): string {
   return secret;
 }
 
+// Short-lived access token for API calls.
+// You can tweak this via env (JWT_ACCESS_TTL) if needed.
+const ACCESS_TOKEN_TTL =
+  process.env.JWT_ACCESS_TTL && process.env.JWT_ACCESS_TTL.trim().length > 0
+    ? process.env.JWT_ACCESS_TTL
+    : "1h";
+
 // -----------------------------
 // POST /api/auth/login
 // -----------------------------
@@ -21,18 +28,24 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
 
     if (!email || !password) {
       res.status(400).json({
-        error: { code: "BAD_REQUEST", message: "Email and password required." }
+        error: {
+          code: "BAD_REQUEST",
+          message: "Email and password required.",
+        },
       });
       return;
     }
 
     const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() }
+      where: { email: email.toLowerCase() },
     });
 
     if (!user) {
       res.status(401).json({
-        error: { code: "INVALID_CREDENTIALS", message: "Invalid credentials." }
+        error: {
+          code: "INVALID_CREDENTIALS",
+          message: "Invalid credentials.",
+        },
       });
       return;
     }
@@ -40,7 +53,10 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
       res.status(401).json({
-        error: { code: "INVALID_CREDENTIALS", message: "Invalid credentials." }
+        error: {
+          code: "INVALID_CREDENTIALS",
+          message: "Invalid credentials.",
+        },
       });
       return;
     }
@@ -50,10 +66,12 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
         sub: user.id,
         email: user.email,
         role: user.role,
-        organizationId: user.organizationId
+        organizationId: user.organizationId,
       },
       getJwtSecret(),
-      { expiresIn: "1d" }
+      {
+        expiresIn: ACCESS_TOKEN_TTL,
+      }
     );
 
     res.json({
@@ -64,16 +82,16 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
         role: user.role,
         firstName: user.firstName,
         lastName: user.lastName,
-        organizationId: user.organizationId
-      }
+        organizationId: user.organizationId,
+      },
     });
   } catch (err) {
     console.error("Login failed:", err);
     res.status(500).json({
       error: {
         code: "INTERNAL_SERVER_ERROR",
-        message: "An unexpected error occurred."
-      }
+        message: "An unexpected error occurred.",
+      },
     });
   }
 }
@@ -90,22 +108,22 @@ export async function meHandler(
       res.status(401).json({
         error: {
           code: "UNAUTHORIZED",
-          message: "Missing authentication context."
-        }
+          message: "Missing authentication context.",
+        },
       });
       return;
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.user.id },
     });
 
     if (!user) {
       res.status(404).json({
         error: {
           code: "NOT_FOUND",
-          message: "User not found."
-        }
+          message: "User not found.",
+        },
       });
       return;
     }
@@ -116,15 +134,16 @@ export async function meHandler(
       role: user.role,
       firstName: user.firstName,
       lastName: user.lastName,
-      organizationId: user.organizationId
+      organizationId: user.organizationId,
     });
   } catch (err) {
     console.error("meHandler error:", err);
     res.status(500).json({
       error: {
         code: "INTERNAL_SERVER_ERROR",
-        message: "An unexpected error occurred."
-      }
+        message: "An unexpected error occurred.",
+      },
     });
   }
 }
+
