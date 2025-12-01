@@ -1,149 +1,62 @@
-import type { Request, Response } from "express";
-import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { prisma } from "../../db/client";
-import type { AuthenticatedRequest } from "../../middleware/auth";
+import { Request } from "express";
+import {
+  createSessionToken,
+  rotateSessionToken,
+  findSessionToken,
+  revokeAllSessionsForUser,
+} from "./sessionStore";
 
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET is not set");
-  }
-  return secret;
+const ACCESS_TOKEN_TTL = "1h"; // adjust if needed
+const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_PROD";
+
+export type User = {
+  id: string;
+  email: string;
+  role: "ADMIN" | "AGENT" | "VIEW_ONLY" | "MANAGER" | "COMPLIANCE_OFFICER";
+  organizationId: string;
+};
+
+export type AccessTokenPayload = {
+  sub: string;
+  email: string;
+  role: User["role"];
+  organizationId: string;
+};
+
+export function signAccessToken(user: User): string {
+  const payload: AccessTokenPayload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+    organizationId: user.organizationId,
+  };
+
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: ACCESS_TOKEN_TTL,
+  });
 }
 
-// Short-lived access token for API calls.
-// You can tweak this via env (JWT_ACCESS_TTL) if needed.
-const ACCESS_TOKEN_TTL =
-  process.env.JWT_ACCESS_TTL && process.env.JWT_ACCESS_TTL.trim().length > 0
-    ? process.env.JWT_ACCESS_TTL
-    : "1h";
-
-// -----------------------------
-// POST /api/auth/login
-// -----------------------------
-export async function loginHandler(req: Request, res: Response): Promise<void> {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      res.status(400).json({
-        error: {
-          code: "BAD_REQUEST",
-          message: "Email and password required.",
-        },
-      });
-      return;
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-
-    if (!user) {
-      res.status(401).json({
-        error: {
-          code: "INVALID_CREDENTIALS",
-          message: "Invalid credentials.",
-        },
-      });
-      return;
-    }
-
-    const isValid = await bcrypt.compare(password, user.passwordHash);
-    if (!isValid) {
-      res.status(401).json({
-        error: {
-          code: "INVALID_CREDENTIALS",
-          message: "Invalid credentials.",
-        },
-      });
-      return;
-    }
-
-    const token = jwt.sign(
-      {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
-        organizationId: user.organizationId,
-      },
-      getJwtSecret(),
-      {
-        expiresIn: ACCESS_TOKEN_TTL,
-      }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        organizationId: user.organizationId,
-      },
-    });
-  } catch (err) {
-    console.error("Login failed:", err);
-    res.status(500).json({
-      error: {
-        code: "INTERNAL_SERVER_ERROR",
-        message: "An unexpected error occurred.",
-      },
-    });
-  }
+export function verifyAccessToken(token: string): AccessTokenPayload {
+  return jwt.verify(token, JWT_SECRET) as AccessTokenPayload;
 }
 
-// -----------------------------
-// GET /api/auth/me
-// -----------------------------
-export async function meHandler(
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> {
-  try {
-    if (!req.user) {
-      res.status(401).json({
-        error: {
-          code: "UNAUTHORIZED",
-          message: "Missing authentication context.",
-        },
-      });
-      return;
-    }
+export function createSessionForUser(user: User, req: Request) {
+  const userAgent = req.header("user-agent") ?? null;
+  const ipAddress = (req.headers["x-forwarded-for"] as string) || req.ip || null;
 
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
+  return createSessionToken(user.id, userAgent, ipAddress);
+}
 
-    if (!user) {
-      res.status(404).json({
-        error: {
-          code: "NOT_FOUND",
-          message: "User not found.",
-        },
-      });
-      return;
-    }
+export function rotateSession(refreshToken: string) {
+  return rotateSessionToken(refreshToken);
+}
 
-    res.json({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      organizationId: user.organizationId,
-    });
-  } catch (err) {
-    console.error("meHandler error:", err);
-    res.status(500).json({
-      error: {
-        code: "INTERNAL_SERVER_ERROR",
-        message: "An unexpected error occurred.",
-      },
-    });
-  }
+export function getSession(refreshToken: string) {
+  return findSessionToken(refreshToken);
+}
+
+export function revokeAllUserSessions(userId: string) {
+  revokeAllSessionsForUser(userId);
 }
 

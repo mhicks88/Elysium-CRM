@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getLeadById, runPreCallCheck, updateLead } from "../../lib/apiClient";
 import { useAuth } from "../../lib/auth";
+import { AuditLogPanel } from "./AuditLogPanel";
 
 // Local types (mirror the API payloads) so we don't depend on shared-types.
 
@@ -76,7 +77,7 @@ const purposeOptions: PlannedCallPurpose[] = [
 const LeadDetailPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useAuth() as { user: { role: string } | null };
 
   const canEditLead =
     user && (user.role === "ADMIN" || user.role === "AGENT");
@@ -714,7 +715,7 @@ const LeadDetailPage: React.FC = () => {
             style={{
               padding: "0.5rem",
               borderRadius: 4,
-              border: "1px solid #ccc",
+              border: "1px solid " + (canRunCompliance ? "#ccc" : "#e5e7eb"),
               backgroundColor: canRunCompliance ? "#ffffff" : "#f3f4f6",
             }}
           >
@@ -789,6 +790,9 @@ const LeadDetailPage: React.FC = () => {
           </div>
         )}
       </section>
+
+      {/* 🔍 Audit log panel for this lead */}
+      <AuditLogPanel leadId={lead.id} />
     </div>
   );
 };

@@ -1,12 +1,12 @@
 import { Router } from "express";
-
 import {
   requireAuth,
   requireRole,
   Roles,
-  AuthenticatedRequest,
+  type AuthenticatedRequest,
 } from "../../middleware/auth";
 import { runPreCallChecks } from "./preCallComplianceService";
+import { recordAuditEvent } from "../audit/service";
 
 export const complianceRouter = Router();
 
@@ -15,35 +15,41 @@ complianceRouter.post(
   "/pre-call-check",
   requireAuth,
   requireRole(Roles.ADMIN, Roles.AGENT),
-  async (req, res, next) => {
+  async (req: AuthenticatedRequest, res) => {
+    const user = req.user!;
     const { leadId, purpose, callSessionId } = req.body ?? {};
-    const user = (req as AuthenticatedRequest).user;
 
     if (!leadId || !purpose) {
-      res
+      return res
         .status(400)
         .json({ error: "leadId and purpose are required" });
-      return;
-    }
-
-    if (!user) {
-      res.status(401).json({
-        error: { code: "UNAUTHORIZED", message: "Missing auth context" },
-      });
-      return;
     }
 
     try {
       const result = await runPreCallChecks({
         leadId,
-        agentUserId: user.id,
+        agentUserId: user.id,              // 👈 renamed from userId → agentUserId
         purpose,
-        callSessionId,
+        callSessionId: callSessionId ?? null,
       });
 
-      res.json(result);
-    } catch (err) {
-      next(err);
+      // Audit: compliance check
+      await recordAuditEvent({
+        userId: user.id,
+        leadId,
+        eventType: "COMPLIANCE_CHECK",
+        eventData: {
+          purpose,
+          callSessionId: callSessionId ?? null,
+          result,
+        },
+      });
+
+      return res.json(result);
+    } catch (err: any) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Failed to run compliance check" });
     }
   }
 );

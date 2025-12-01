@@ -1,169 +1,162 @@
-// apps/api/src/modules/leads/routes.ts
-
 import { Router } from "express";
 import {
-  LeadStatus,
-  UpdateLeadRequestDto,
-  CreateLeadRequestDto,
-} from "@elysium-crm/shared-types";
-import {
-  AuthenticatedRequest,
   requireAuth,
   requireRole,
   Roles,
+  type AuthenticatedRequest,
 } from "../../middleware/auth";
 import {
+  createLead,
   listLeads,
   getLeadById,
   updateLead,
-  createLead,
 } from "./service";
+import { recordAuditEvent } from "../audit/service";
 
 export const leadsRouter = Router();
-
-// All routes require auth
-leadsRouter.use(requireAuth);
-
-// Helper to safely parse optional integers from query params
-function parseOptionalInt(value: unknown): number | undefined {
-  if (typeof value !== "string") return undefined;
-  const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed)) return undefined;
-  return parsed;
-}
 
 // POST /api/leads
 leadsRouter.post(
   "/",
+  requireAuth,
   requireRole(Roles.ADMIN, Roles.AGENT),
-  async (req, res, next) => {
-    const authReq = req as AuthenticatedRequest;
-    const user = authReq.user;
-
-    if (!user) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-
-    const payload = req.body as CreateLeadRequestDto;
-
-    // Minimal validation for now; can be tightened later.
-    if (!payload.firstName || !payload.lastName || !payload.phone) {
-      res.status(400).json({
-        error: "Missing required fields: firstName, lastName, phone",
-      });
-      return;
-    }
+  async (req: AuthenticatedRequest, res) => {
+    const user = req.user!;
+    const payload = req.body;
 
     try {
       const lead = await createLead(user.organizationId, payload);
-      res.status(201).json(lead);
-    } catch (err) {
-      next(err);
+
+      // Audit: lead created
+      await recordAuditEvent({
+        userId: user.id,
+        leadId: lead.id,
+        eventType: "LEAD_CREATED",
+        eventData: { payload },
+      });
+
+      return res.status(201).json(lead);
+    } catch (err: any) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Failed to create lead" });
     }
   }
 );
 
 // GET /api/leads
-leadsRouter.get("/", async (req, res, next) => {
-  const authReq = req as AuthenticatedRequest;
-  const user = authReq.user;
+leadsRouter.get(
+  "/",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const user = req.user!;
 
-  if (!user) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  // Safely parse query params
-  const page = parseOptionalInt(req.query.page);
-  const pageSize = parseOptionalInt(req.query.pageSize);
-  const rawSearch = typeof req.query.search === "string" ? req.query.search : undefined;
-  const search = rawSearch ? rawSearch.trim() : undefined;
-
-  const statusParam = (req.query.status as string | undefined) ?? "ALL";
-
-  const validStatuses = new Set<string>([
-    "ALL",
-    ...Object.values(LeadStatus),
-  ]);
-
-  if (!validStatuses.has(statusParam)) {
-    res.status(400).json({ error: "Invalid status filter" });
-    return;
-  }
-
-  try {
-    const result = await listLeads(user.organizationId, {
+    const {
       page,
       pageSize,
       search,
-      status: statusParam as LeadStatus | "ALL",
-    });
+      status,
+      sortBy,
+      sortOrder,
+    } = req.query as Record<string, string | undefined>;
 
-    res.json(result);
-  } catch (err) {
-    next(err);
+    // Narrow status to allowed values (NEW, IN_PROGRESS, ENROLLED, DO_NOT_CONTACT, ALL)
+    type StatusFilter =
+      | "NEW"
+      | "IN_PROGRESS"
+      | "ENROLLED"
+      | "DO_NOT_CONTACT"
+      | "ALL";
+
+    const rawStatus = status;
+    const allowedStatuses: StatusFilter[] = [
+      "NEW",
+      "IN_PROGRESS",
+      "ENROLLED",
+      "DO_NOT_CONTACT",
+      "ALL",
+    ];
+
+    const typedStatus = allowedStatuses.includes(rawStatus as StatusFilter)
+      ? (rawStatus as StatusFilter)
+      : undefined;
+
+    const filters: any = {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+      search: search ?? undefined,
+      status: typedStatus,
+      sortBy: sortBy ?? undefined,
+      sortOrder: (sortOrder as "asc" | "desc" | undefined) ?? undefined,
+    };
+
+    try {
+      const result = await listLeads(user.organizationId, filters);
+      return res.json(result);
+    } catch (err: any) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Failed to list leads" });
+    }
   }
-});
+);
 
 // GET /api/leads/:id
-leadsRouter.get("/:id", async (req, res, next) => {
-  const authReq = req as AuthenticatedRequest;
-  const user = authReq.user;
+leadsRouter.get(
+  "/:id",
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const user = req.user!;
+    const { id } = req.params;
 
-  if (!user) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  try {
-    const lead = await getLeadById(user.organizationId, req.params.id);
-    res.json(lead);
-  } catch (err: any) {
-    if (err && err.status === 404) {
-      res.status(404).json({ error: "Lead not found" });
-      return;
+    try {
+      const lead = await getLeadById(user.organizationId, id);
+      if (!lead) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+      return res.json(lead);
+    } catch (err: any) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Failed to fetch lead" });
     }
-    next(err);
   }
-});
+);
 
 // PUT /api/leads/:id
 leadsRouter.put(
   "/:id",
+  requireAuth,
   requireRole(Roles.ADMIN, Roles.AGENT),
-  async (req, res, next) => {
-    const authReq = req as AuthenticatedRequest;
-    const user = authReq.user;
-
-    if (!user) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-
-    const payload = req.body as UpdateLeadRequestDto;
-
-    if (
-      payload.status &&
-      !Object.values(LeadStatus).includes(payload.status)
-    ) {
-      res.status(400).json({ error: "Invalid lead status" });
-      return;
-    }
+  async (req: AuthenticatedRequest, res) => {
+    const user = req.user!;
+    const { id } = req.params;
+    const payload = req.body;
 
     try {
-      const lead = await updateLead(
-        user.organizationId,
-        req.params.id,
-        payload
-      );
-      res.json(lead);
-    } catch (err: any) {
-      if (err && err.status === 404) {
-        res.status(404).json({ error: "Lead not found" });
-        return;
+      const before = await getLeadById(user.organizationId, id);
+      if (!before) {
+        return res.status(404).json({ error: "Lead not found" });
       }
-      next(err);
+
+      const updated = await updateLead(user.organizationId, id, payload);
+
+      // Audit: lead updated
+      await recordAuditEvent({
+        userId: user.id,
+        leadId: id,
+        eventType: "LEAD_UPDATED",
+        eventData: {
+          before,
+          after: updated,
+        },
+      });
+
+      return res.json(updated);
+    } catch (err: any) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Failed to update lead" });
     }
   }
 );

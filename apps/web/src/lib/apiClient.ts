@@ -1,154 +1,216 @@
-// apps/web/src/lib/apiClient.ts
-
 import type {
-  LoginRequestDto,
-  LoginResponseDto,
-} from "@elysium-crm/shared-types/dto/auth";
-import type {
-  PreCallCheckResultDto,
-  PlannedCallPurpose,
+  PreCallComplianceRequestDto,
+  PreCallComplianceResponseDto,
 } from "@elysium-crm/shared-types/dto/compliance";
-import type {
-  LeadDetailDto,
-  LeadListResponseDto,
-  LeadStatus,
-  UpdateLeadRequestDto,
-  CreateLeadRequestDto,
-} from "@elysium-crm/shared-types/dto/lead";
-import { readStoredToken, clearStoredAuth } from "./auth";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:4000";
+// Base URL for the API – configured via Vite env
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {}
+// Helper to build full URLs
+function buildUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  return `${API_BASE_URL}${path}`;
+}
+
+// Simple fetch-based API client with automatic access-token refresh.
+
+let accessToken: string | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  try {
+    const res = await fetch(buildUrl("/api/auth/refresh"), {
+      method: "POST",
+      credentials: "include", // important: send refreshToken cookie
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      setAccessToken(null);
+      return null;
+    }
+
+    const data = (await res.json()) as { accessToken: string };
+    setAccessToken(data.accessToken);
+    return data.accessToken;
+  } catch (_err) {
+    setAccessToken(null);
+    return null;
+  }
+}
+
+type ApiOptions = RequestInit & {
+  auth?: boolean; // default true – whether to attach Authorization
+};
+
+export async function apiFetch<T = unknown>(
+  input: string,
+  init: ApiOptions = {}
 ): Promise<T> {
-  const token = readStoredToken();
+  const { auth = true, ...rest } = init;
 
   const headers: HeadersInit = {
     "Content-Type": "application/json",
-    ...(options.headers || {}),
+    ...(rest.headers || {}),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  if (auth && accessToken) {
+    (headers as any)["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
+  const url = buildUrl(input as string);
+
+  const firstResponse = await fetch(url, {
+    ...rest,
     headers,
+    credentials: rest.credentials ?? "include", // send cookies by default
+  });
+
+  // If not an auth-protected route or response is ok, return directly
+  if (!auth || firstResponse.status !== 401) {
+    if (!firstResponse.ok) {
+      const text = await firstResponse.text();
+      throw new Error(
+        `API error ${firstResponse.status}: ${text || firstResponse.statusText}`
+      );
+    }
+    return (await firstResponse.json()) as T;
+  }
+
+  // 401 on an authenticated route → try to refresh token
+  const newAccessToken = await refreshAccessToken();
+  if (!newAccessToken) {
+    // Hard logout path
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
+
+  // Retry original request with new token
+  const retryHeaders: HeadersInit = {
+    ...headers,
+    Authorization: `Bearer ${newAccessToken}`,
+  };
+
+  const retryResponse = await fetch(url, {
+    ...rest,
+    headers: retryHeaders,
+    credentials: rest.credentials ?? "include",
+  });
+
+  if (!retryResponse.ok) {
+    const text = await retryResponse.text();
+    throw new Error(
+      `API error ${retryResponse.status} (after refresh): ${
+        text || retryResponse.statusText
+      }`
+    );
+  }
+
+  return (await retryResponse.json()) as T;
+}
+
+// -----------------------------------------------------------------------------
+// AUTH
+// -----------------------------------------------------------------------------
+
+// Simple login helper used by src/routes/auth/index.tsx
+export async function login(payload: { email: string; password: string }) {
+  const res = await fetch(buildUrl("/api/auth/login"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
-    let message = `Request failed with status ${res.status}`;
-    let body: any = null;
-
-    try {
-      body = await res.json();
-      message =
-        body?.error?.message ??
-        body?.error ??
-        body?.message ??
-        message;
-    } catch {
-      // ignore JSON parse errors
-    }
-
-    // Auto-logout flow: only if we *had* a token (i.e. not a failed login)
-    if (res.status === 401 && token) {
-      clearStoredAuth();
-      try {
-        // Avoid redirect loops if somehow already on /login
-        if (window.location.pathname !== "/login") {
-          window.location.href = "/login?reason=session_expired";
-        }
-      } catch {
-        // window might not exist in some environments; safe to ignore
-      }
-    }
-
-    const error = new Error(message) as Error & { status?: number; data?: any };
-    error.status = res.status;
-    error.data = body ?? undefined;
-    throw error;
+    const text = await res.text();
+    throw new Error(text || "Login failed");
   }
 
-  // Some endpoints might return 204 No Content
-  if (res.status === 204) {
-    return undefined as T;
-  }
-
-  return (await res.json()) as T;
+  return res.json();
 }
 
-/**
- * Auth login
- */
-export async function login(
-  payload: LoginRequestDto
-): Promise<LoginResponseDto> {
-  return request<LoginResponseDto>("/api/auth/login", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+// -----------------------------------------------------------------------------
+// COMPLIANCE
+// -----------------------------------------------------------------------------
+
+export async function runPreCallCheck(
+  payload: PreCallComplianceRequestDto
+): Promise<PreCallComplianceResponseDto> {
+  return apiFetch<PreCallComplianceResponseDto>(
+    "/api/compliance/pre-call-check",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
 }
 
-/**
- * Compliance: run pre-call check
- */
-export async function runPreCallCheck(params: {
-  leadId: string;
-  purpose: PlannedCallPurpose;
-  callSessionId?: string;
-}): Promise<PreCallCheckResultDto> {
-  return request<PreCallCheckResultDto>("/api/compliance/pre-call-check", {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
-}
+// -----------------------------------------------------------------------------
+// LEADS
+// -----------------------------------------------------------------------------
 
-/**
- * Leads API helpers
- */
+// List leads
 export async function getLeads(params: {
   page?: number;
   pageSize?: number;
   search?: string;
-  status?: LeadStatus | "ALL";
-}): Promise<LeadListResponseDto> {
-  const searchParams = new URLSearchParams();
-  if (params.page) searchParams.append("page", String(params.page));
-  if (params.pageSize) searchParams.append("pageSize", String(params.pageSize));
-  if (params.search) searchParams.append("search", params.search);
-  if (params.status) searchParams.append("status", params.status);
+  status?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
+} = {}) {
+  const search = new URLSearchParams();
 
-  const query = searchParams.toString();
-  const url = query ? `/api/leads?${query}` : "/api/leads";
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      search.set(key, String(value));
+    }
+  });
 
-  return request<LeadListResponseDto>(url);
+  const queryString = search.toString();
+  const url = queryString ? `/api/leads?${queryString}` : "/api/leads";
+
+  return apiFetch<any>(url, { method: "GET" });
 }
 
-export async function getLeadById(id: string): Promise<LeadDetailDto> {
-  return request<LeadDetailDto>(`/api/leads/${id}`);
+// Fetch single lead
+export async function getLeadById(id: string) {
+  return apiFetch<any>(`/api/leads/${id}`, { method: "GET" });
 }
 
+// Update lead
 export async function updateLead(
   id: string,
-  payload: UpdateLeadRequestDto
-): Promise<LeadDetailDto> {
-  return request<LeadDetailDto>(`/api/leads/${id}`, {
+  payload: Record<string, unknown>
+) {
+  return apiFetch<any>(`/api/leads/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
 }
 
-export async function createLead(
-  payload: CreateLeadRequestDto
-): Promise<LeadDetailDto> {
-  return request<LeadDetailDto>("/api/leads", {
+// Create lead
+export async function createLead(payload: Record<string, unknown>) {
+  return apiFetch<any>("/api/leads", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+// -----------------------------------------------------------------------------
+// AUDIT LOG
+// -----------------------------------------------------------------------------
+
+export async function getAuditEvents(leadId: string) {
+  return apiFetch<{ events: any[] }>(`/api/audit/${leadId}`, {
+    method: "GET",
   });
 }
 

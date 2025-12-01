@@ -12,5 +12,8 @@
     "dev": "npm run dev --workspace apps/api & npm run dev --workspace apps/web",
     "build": "npm run build --workspaces",
     "test": "npm test --workspaces"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7"
   }
 }

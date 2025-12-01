@@ -1,17 +1,19 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import { verifyAccessToken } from "../modules/auth/service";
 
-interface JwtPayload {
-  sub: string;
-  role: string;
-  organizationId: string;
-  email: string;
+export enum Roles {
+  ADMIN = "ADMIN",
+  AGENT = "AGENT",
+  VIEW_ONLY = "VIEW_ONLY",
+  MANAGER = "MANAGER",
+  COMPLIANCE_OFFICER = "COMPLIANCE_OFFICER",
 }
 
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  role: string;
+  role: Roles;
+  // Multi-tenant – routes expect this to exist
   organizationId: string;
 }
 
@@ -19,72 +21,49 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
 }
 
-// Central place to define known roles.
-// IMPORTANT: These string values must match what's stored in your DB.
-export const Roles = {
-  ADMIN: "ADMIN",
-  AGENT: "AGENT",
-  VIEW_ONLY: "VIEW_ONLY",
-} as const;
-
-const getJwtSecret = (): string => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET is not set");
-  }
-  return secret;
-};
-
-export const requireAuth = (
+// Basic auth guard – validates access token and attaches user to req
+export function requireAuth(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
-): void => {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
-    res.status(401).json({
-      error: { code: "UNAUTHORIZED", message: "Missing or invalid token" },
-    });
-    return;
+) {
+  const authHeader = req.header("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const token = header.slice("Bearer ".length).trim();
+  const token = authHeader.substring("Bearer ".length);
 
   try {
-    const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
+    const payload: any = verifyAccessToken(token);
 
     req.user = {
-      id: decoded.sub,
-      email: decoded.email,
-      role: decoded.role,
-      organizationId: decoded.organizationId,
+      id: payload.sub ?? payload.id,
+      email: payload.email,
+      role: payload.role,
+      organizationId: payload.organizationId,
     };
 
-    next();
-  } catch {
-    res.status(401).json({
-      error: { code: "UNAUTHORIZED", message: "Invalid token" },
-    });
+    return next();
+  } catch (err) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
-};
+}
 
-export const requireRole =
-  (...roles: string[]) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      res.status(401).json({
-        error: { code: "UNAUTHORIZED", message: "Missing auth context" },
-      });
-      return;
+// Role-based access control middleware
+export function requireRole(...allowedRoles: Roles[]) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const user = req.user;
+
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
     }
 
-    if (!roles.includes(req.user.role)) {
-      res.status(403).json({
-        error: { code: "FORBIDDEN", message: "Insufficient permissions" },
-      });
-      return;
+    if (!allowedRoles.includes(user.role)) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
-    next();
+    return next();
   };
+}
 
