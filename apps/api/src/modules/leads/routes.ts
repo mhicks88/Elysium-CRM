@@ -9,6 +9,8 @@ import {
 import {
   AuthenticatedRequest,
   requireAuth,
+  requireRole,
+  Roles,
 } from "../../middleware/auth";
 import {
   listLeads,
@@ -19,6 +21,9 @@ import {
 
 export const leadsRouter = Router();
 
+// All routes require auth
+leadsRouter.use(requireAuth);
+
 // Helper to safely parse optional integers from query params
 function parseOptionalInt(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined;
@@ -27,36 +32,37 @@ function parseOptionalInt(value: unknown): number | undefined {
   return parsed;
 }
 
-// All routes require auth
-leadsRouter.use(requireAuth);
-
 // POST /api/leads
-leadsRouter.post("/", async (req, res, next) => {
-  const authReq = req as AuthenticatedRequest;
-  const user = authReq.user;
+leadsRouter.post(
+  "/",
+  requireRole(Roles.ADMIN, Roles.AGENT),
+  async (req, res, next) => {
+    const authReq = req as AuthenticatedRequest;
+    const user = authReq.user;
 
-  if (!user) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const payload = req.body as CreateLeadRequestDto;
+
+    // Minimal validation for now; can be tightened later.
+    if (!payload.firstName || !payload.lastName || !payload.phone) {
+      res.status(400).json({
+        error: "Missing required fields: firstName, lastName, phone",
+      });
+      return;
+    }
+
+    try {
+      const lead = await createLead(user.organizationId, payload);
+      res.status(201).json(lead);
+    } catch (err) {
+      next(err);
+    }
   }
-
-  const payload = req.body as CreateLeadRequestDto;
-
-  // Minimal validation for now; can be tightened later.
-  if (!payload.firstName || !payload.lastName || !payload.phone) {
-    res.status(400).json({
-      error: "Missing required fields: firstName, lastName, phone",
-    });
-    return;
-  }
-
-  try {
-    const lead = await createLead(user.organizationId, payload);
-    res.status(201).json(lead);
-  } catch (err) {
-    next(err);
-  }
-});
+);
 
 // GET /api/leads
 leadsRouter.get("/", async (req, res, next) => {
@@ -123,38 +129,42 @@ leadsRouter.get("/:id", async (req, res, next) => {
 });
 
 // PUT /api/leads/:id
-leadsRouter.put("/:id", async (req, res, next) => {
-  const authReq = req as AuthenticatedRequest;
-  const user = authReq.user;
+leadsRouter.put(
+  "/:id",
+  requireRole(Roles.ADMIN, Roles.AGENT),
+  async (req, res, next) => {
+    const authReq = req as AuthenticatedRequest;
+    const user = authReq.user;
 
-  if (!user) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  const payload = req.body as UpdateLeadRequestDto;
-
-  if (
-    payload.status &&
-    !Object.values(LeadStatus).includes(payload.status)
-  ) {
-    res.status(400).json({ error: "Invalid lead status" });
-    return;
-  }
-
-  try {
-    const lead = await updateLead(
-      user.organizationId,
-      req.params.id,
-      payload
-    );
-    res.json(lead);
-  } catch (err: any) {
-    if (err && err.status === 404) {
-      res.status(404).json({ error: "Lead not found" });
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    next(err);
+
+    const payload = req.body as UpdateLeadRequestDto;
+
+    if (
+      payload.status &&
+      !Object.values(LeadStatus).includes(payload.status)
+    ) {
+      res.status(400).json({ error: "Invalid lead status" });
+      return;
+    }
+
+    try {
+      const lead = await updateLead(
+        user.organizationId,
+        req.params.id,
+        payload
+      );
+      res.json(lead);
+    } catch (err: any) {
+      if (err && err.status === 404) {
+        res.status(404).json({ error: "Lead not found" });
+        return;
+      }
+      next(err);
+    }
   }
-});
+);
 

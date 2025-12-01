@@ -19,6 +19,14 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
 }
 
+// Central place to define known roles.
+// IMPORTANT: These string values must match what's stored in your DB.
+export const Roles = {
+  ADMIN: "ADMIN",
+  AGENT: "AGENT",
+  VIEW_ONLY: "VIEW_ONLY",
+} as const;
+
 const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
