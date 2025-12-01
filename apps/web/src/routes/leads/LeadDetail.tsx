@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getLeadById, runPreCallCheck, updateLead } from "../../lib/apiClient";
+import { useAuth } from "../../lib/auth";
 
 // Local types (mirror the API payloads) so we don't depend on shared-types.
 
@@ -75,6 +76,11 @@ const purposeOptions: PlannedCallPurpose[] = [
 const LeadDetailPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  const canEditLead =
+    user && (user.role === "ADMIN" || user.role === "AGENT");
+  const canRunCompliance = canEditLead; // same roles for now
 
   const [lead, setLead] = useState<LeadDetail | null>(null);
   const [form, setForm] = useState<UpdateLeadRequest>({});
@@ -146,7 +152,7 @@ const LeadDetailPage: React.FC = () => {
     };
 
   const handleStartEdit = () => {
-    if (!lead) return;
+    if (!lead || !canEditLead) return;
     syncFormFromLead(lead);
     setSaveMessage(null);
     setError(null);
@@ -166,7 +172,7 @@ const LeadDetailPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!id || !isEditing) return;
+    if (!id || !isEditing || !canEditLead) return;
 
     setSaving(true);
     setSaveMessage(null);
@@ -189,7 +195,7 @@ const LeadDetailPage: React.FC = () => {
   };
 
   const handleComplianceCheck = async () => {
-    if (!id) return;
+    if (!id || !canRunCompliance) return;
 
     setComplianceLoading(true);
     setComplianceError(null);
@@ -308,7 +314,7 @@ const LeadDetailPage: React.FC = () => {
           }}
         >
           <h2>Lead details</h2>
-          {!isEditing ? (
+          {canEditLead && !isEditing && (
             <button
               type="button"
               onClick={handleStartEdit}
@@ -324,7 +330,8 @@ const LeadDetailPage: React.FC = () => {
             >
               Edit
             </button>
-          ) : (
+          )}
+          {canEditLead && isEditing && (
             <button
               type="button"
               onClick={handleCancelEdit}
@@ -405,7 +412,7 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.firstName ?? ""}
                 onChange={(e) => updateField("firstName")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -427,7 +434,7 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.lastName ?? ""}
                 onChange={(e) => updateField("lastName")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -452,7 +459,7 @@ const LeadDetailPage: React.FC = () => {
                 type="email"
                 value={form.email ?? ""}
                 onChange={(e) => updateField("email")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -474,7 +481,7 @@ const LeadDetailPage: React.FC = () => {
                 type="tel"
                 value={form.phone ?? ""}
                 onChange={(e) => updateField("phone")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -499,7 +506,7 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.state ?? ""}
                 onChange={(e) => updateField("state")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -521,7 +528,7 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.zip ?? ""}
                 onChange={(e) => updateField("zip")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -546,7 +553,7 @@ const LeadDetailPage: React.FC = () => {
                 type="text"
                 value={form.timezone ?? ""}
                 onChange={(e) => updateField("timezone")(e.target.value)}
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -569,7 +576,7 @@ const LeadDetailPage: React.FC = () => {
                 onChange={(e) =>
                   updateField("status")(e.target.value as LeadStatus)
                 }
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
                 style={{
                   width: "100%",
                   padding: 8,
@@ -599,7 +606,7 @@ const LeadDetailPage: React.FC = () => {
               value={form.notes ?? ""}
               onChange={(e) => updateField("notes")(e.target.value)}
               rows={4}
-              disabled={!isEditing}
+              disabled={!isEditing || !canEditLead}
               style={{
                 width: "100%",
                 padding: 8,
@@ -620,7 +627,7 @@ const LeadDetailPage: React.FC = () => {
                 onChange={(e) =>
                   updateField("permissionToContactPhone")(e.target.checked)
                 }
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
               />
               Permission to contact by phone
             </label>
@@ -633,13 +640,13 @@ const LeadDetailPage: React.FC = () => {
                 onChange={(e) =>
                   updateField("doNotContact")(e.target.checked)
                 }
-                disabled={!isEditing}
+                disabled={!isEditing || !canEditLead}
               />
               Do not contact
             </label>
           </div>
 
-          {isEditing && (
+          {isEditing && canEditLead && (
             <div
               style={{
                 display: "flex",
@@ -703,10 +710,12 @@ const LeadDetailPage: React.FC = () => {
             onChange={(e) =>
               setPurpose(e.target.value as PlannedCallPurpose)
             }
+            disabled={!canRunCompliance}
             style={{
               padding: "0.5rem",
               borderRadius: 4,
               border: "1px solid #ccc",
+              backgroundColor: canRunCompliance ? "#ffffff" : "#f3f4f6",
             }}
           >
             {purposeOptions.map((p) => (
@@ -717,17 +726,24 @@ const LeadDetailPage: React.FC = () => {
           </select>
           <button
             onClick={handleComplianceCheck}
-            disabled={complianceLoading}
+            disabled={complianceLoading || !canRunCompliance}
             style={{
               padding: "0.6rem 1rem",
               borderRadius: 4,
               border: "none",
-              backgroundColor: "#111827",
+              backgroundColor: canRunCompliance ? "#111827" : "#9ca3af",
               color: "white",
-              cursor: complianceLoading ? "default" : "pointer",
+              cursor:
+                complianceLoading || !canRunCompliance
+                  ? "default"
+                  : "pointer",
             }}
           >
-            {complianceLoading ? "Checking..." : "Run check"}
+            {complianceLoading
+              ? "Checking..."
+              : canRunCompliance
+              ? "Run check"
+              : "Insufficient permissions"}
           </button>
         </div>
 

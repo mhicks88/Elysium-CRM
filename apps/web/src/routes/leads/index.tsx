@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getLeads } from "../../lib/apiClient";
+import { useAuth } from "../../lib/auth";
 
 // Local types for the leads list UI.
 // These mirror what the API returns but are defined here so we don't
@@ -78,8 +79,66 @@ const parseSortDirection = (raw: string | null): SortDirection => {
   return "desc";
 };
 
+// Status badge styling helper
+const getStatusBadgeStyle = (status: LeadStatus): React.CSSProperties => {
+  const base: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "0.15rem 0.5rem",
+    borderRadius: 9999,
+    fontSize: 12,
+    fontWeight: 500,
+    border: "1px solid transparent",
+  };
+
+  switch (status) {
+    case "NEW":
+      return {
+        ...base,
+        backgroundColor: "#dbeafe",
+        color: "#1d4ed8",
+        borderColor: "#93c5fd",
+      };
+    case "IN_PROGRESS":
+      return {
+        ...base,
+        backgroundColor: "#fef9c3",
+        color: "#854d0e",
+        borderColor: "#facc15",
+      };
+    case "ENROLLED":
+      return {
+        ...base,
+        backgroundColor: "#dcfce7",
+        color: "#166534",
+        borderColor: "#86efac",
+      };
+    case "DO_NOT_CONTACT":
+      return {
+        ...base,
+        backgroundColor: "#fee2e2",
+        color: "#991b1b",
+        borderColor: "#fecaca",
+      };
+    default:
+      return base;
+  }
+};
+
+// Simple skeleton cell style
+const skeletonCellStyle: React.CSSProperties = {
+  height: 12,
+  borderRadius: 9999,
+  backgroundColor: "#e5e7eb",
+};
+
 const LeadsPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
+
+  const canEditLeads =
+    user && (user.role === "ADMIN" || user.role === "AGENT");
 
   // Initialize state from URL on first render
   const [page, setPage] = useState<number>(() => parsePage(searchParams.get("page")));
@@ -279,6 +338,97 @@ const LeadsPage: React.FC = () => {
       ? 0
       : Math.min(startIndex + sortedLeads.length - 1, total);
 
+  // Render a simple skeleton table while loading
+  const renderSkeleton = () => {
+    const rows = Array.from({ length: 8 });
+    const cols = 7; // Name, Status, Email, Phone, State, Assigned, Created
+
+    return (
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          padding: "1rem",
+          borderRadius: 6,
+        }}
+      >
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            marginBottom: "1rem",
+          }}
+        >
+          <thead>
+            <tr>
+              {Array.from({ length: cols }).map((_, idx) => (
+                <th
+                  key={idx}
+                  style={{
+                    textAlign: "left",
+                    borderBottom: "1px solid #e5e7eb",
+                    padding: 8,
+                    fontSize: 12,
+                    color: "#9ca3af",
+                  }}
+                >
+                  {/* faint header blocks */}
+                  <div style={{ ...skeletonCellStyle, width: "40%" }} />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((_, rowIdx) => (
+              <tr key={rowIdx}>
+                {Array.from({ length: cols }).map((__, colIdx) => (
+                  <td
+                    key={colIdx}
+                    style={{
+                      borderBottom: "1px solid #f3f4f6",
+                      padding: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        ...skeletonCellStyle,
+                        width:
+                          colIdx === 0
+                            ? "60%"
+                            : colIdx === 2
+                            ? "80%"
+                            : "40%",
+                      }}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            color: "#9ca3af",
+            fontSize: 12,
+          }}
+        >
+          <div>Loading leads…</div>
+          <div
+            style={{
+              display: "flex",
+              gap: "0.5rem",
+            }}
+          >
+            <div style={{ ...skeletonCellStyle, width: 70 }} />
+            <div style={{ ...skeletonCellStyle, width: 70 }} />
+          </div>
+        </div>
+      </section>
+    );
+  };
+
   return (
     <div style={{ padding: "1.5rem" }}>
       <header
@@ -290,19 +440,21 @@ const LeadsPage: React.FC = () => {
         }}
       >
         <h1>Elysium CRM – Leads</h1>
-        <Link
-          to="/leads/new"
-          style={{
-            padding: "0.5rem 1rem",
-            borderRadius: 4,
-            backgroundColor: "#2563eb",
-            color: "white",
-            textDecoration: "none",
-            fontSize: 14,
-          }}
-        >
-          Create Lead
-        </Link>
+        {canEditLeads && (
+          <Link
+            to="/leads/new"
+            style={{
+              padding: "0.5rem 1rem",
+              borderRadius: 4,
+              backgroundColor: "#2563eb",
+              color: "white",
+              textDecoration: "none",
+              fontSize: 14,
+            }}
+          >
+            Create Lead
+          </Link>
+        )}
       </header>
 
       <section
@@ -333,7 +485,7 @@ const LeadsPage: React.FC = () => {
                 width: "100%",
                 padding: 8,
                 borderRadius: 4,
-                border: "1px solid " + "#ccc",
+                border: "1px solid #ccc",
               }}
             />
           </div>
@@ -385,11 +537,11 @@ const LeadsPage: React.FC = () => {
         </form>
       </section>
 
-      {loading && <div style={{ padding: "1rem" }}>Loading leads...</div>}
-
       {error && (
         <div style={{ padding: "1rem", color: "red" }}>{error}</div>
       )}
+
+      {!error && loading && renderSkeleton()}
 
       {!loading && !error && (
         <section
@@ -467,7 +619,9 @@ const LeadsPage: React.FC = () => {
                           padding: 8,
                         }}
                       >
-                        {lead.status.replace(/_/g, " ")}
+                        <span style={getStatusBadgeStyle(lead.status)}>
+                          {lead.status.replace(/_/g, " ")}
+                        </span>
                       </td>
                       <td
                         style={{
