@@ -9,6 +9,7 @@ import { complianceRouter } from "./modules/compliance/routes";
 import { leadsRouter } from "./modules/leads/routes";
 import { auditRouter } from "./modules/audit/routes";
 import { complianceHistoryRouter } from "./modules/complianceHistory/routes";
+import { complianceAdminRouter } from "./modules/complianceHistory/adminRoutes";
 
 const FRONTEND_ORIGIN =
   process.env.FRONTEND_ORIGIN || "http://localhost:5173";
@@ -44,8 +45,11 @@ export function createServer(): Application {
   // Compliance routes
   app.use("/api/compliance", complianceRouter);
 
-  // Compliance history routes
+  // Compliance history routes (per lead)
   app.use("/api/compliance/history", complianceHistoryRouter);
+
+  // Compliance admin routes (aggregated)
+  app.use("/api/compliance/admin", complianceAdminRouter);
 
   // Leads routes
   app.use("/api/leads", leadsRouter);

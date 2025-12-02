@@ -1,6 +1,18 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+// apps/web/src/lib/auth.tsx
 
-type Role = "ADMIN" | "AGENT" | "VIEW_ONLY" | "MANAGER" | "COMPLIANCE_OFFICER";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+} from "react";
+
+type Role =
+  | "ADMIN"
+  | "AGENT"
+  | "VIEW_ONLY"
+  | "MANAGER"
+  | "COMPLIANCE_OFFICER";
 
 export interface AuthUser {
   id: string;
@@ -15,7 +27,9 @@ interface AuthContextValue {
   isAuthenticated: boolean;
 }
 
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AuthContext = createContext<AuthContextValue | undefined>(
+  undefined
+);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -37,7 +51,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     try {
       if (user) {
-        window.localStorage.setItem("elysium_auth_user", JSON.stringify(user));
+        window.localStorage.setItem(
+          "elysium_auth_user",
+          JSON.stringify(user)
+        );
       } else {
         window.localStorage.removeItem("elysium_auth_user");
       }
@@ -52,7 +69,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     isAuthenticated: !!user,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export function useAuth(): AuthContextValue {

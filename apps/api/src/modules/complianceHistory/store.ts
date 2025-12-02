@@ -35,3 +35,8 @@ export function getComplianceChecksByLead(leadId: string) {
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
+export function getAllComplianceChecks(): ComplianceCheckRecord[] {
+  // return a shallow copy to avoid accidental mutation
+  return [...complianceChecks];
+}
+

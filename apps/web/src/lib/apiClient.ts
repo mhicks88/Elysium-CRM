@@ -224,3 +224,72 @@ export async function getComplianceHistory(leadId: string) {
   });
 }
 
+// -----------------------------------------------------------------------------
+// COMPLIANCE ADMIN DASHBOARD
+// -----------------------------------------------------------------------------
+
+export async function getComplianceSummary(params?: {
+  from?: string;
+  to?: string;
+}) {
+  const search = new URLSearchParams();
+  if (params?.from) search.set("from", params.from);
+  if (params?.to) search.set("to", params.to);
+
+  const qs = search.toString();
+  const url = qs
+    ? `/api/compliance/admin/summary?${qs}`
+    : `/api/compliance/admin/summary`;
+
+  return apiFetch<{
+    totalChecks: number;
+    passCount: number;
+    failCount: number;
+    failRate: number;
+    purposes: Record<
+      string,
+      { total: number; pass: number; fail: number }
+    >;
+    firstCheckAt: string | null;
+    lastCheckAt: string | null;
+  }>(url, { method: "GET" });
+}
+
+export async function getComplianceStatsByAgent(params?: {
+  from?: string;
+  to?: string;
+}) {
+  const search = new URLSearchParams();
+  if (params?.from) search.set("from", params.from);
+  if (params?.to) search.set("to", params.to);
+
+  const qs = search.toString();
+  const url = qs
+    ? `/api/compliance/admin/by-agent?${qs}`
+    : `/api/compliance/admin/by-agent`;
+
+  return apiFetch<{
+    agents: {
+      userId: string;
+      total: number;
+      pass: number;
+      fail: number;
+    }[];
+  }>(url, { method: "GET" });
+}
+
+export async function getRecentComplianceFailures(limit = 20) {
+  const url = `/api/compliance/admin/recent-failures?limit=${limit}`;
+  return apiFetch<{
+    failures: {
+      id: string;
+      leadId: string;
+      userId: string;
+      purpose: string;
+      status: "PASS" | "FAIL";
+      result: any;
+      createdAt: string;
+    }[];
+  }>(url, { method: "GET" });
+}
+

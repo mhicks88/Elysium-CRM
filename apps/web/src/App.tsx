@@ -4,78 +4,98 @@ import {
   Routes,
   Route,
   Navigate,
+  useLocation,
 } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./lib/auth";
+
 import LoginPage from "./routes/auth";
-import CompliancePage from "./routes/compliance";
-import LeadsPage from "./routes/leads";
+import LeadsIndex from "./routes/leads";
 import LeadDetailPage from "./routes/leads/LeadDetail";
 import NewLeadPage from "./routes/leads/NewLead";
+import AdminPage from "./routes/admin/Admin";
 
-type ProtectedRouteProps = {
-  children: React.ReactElement;
-};
+// Simple guard: requires any authenticated user
+function RequireAuth({ children }: { children: JSX.Element }) {
+  const { user, isAuthenticated } = useAuth();
+  const location = useLocation();
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return <div>Loading...</div>;
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
+  if (!isAuthenticated || !user) {
+    // Remember where we came from so login can send us back
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location }}
+      />
+    );
   }
 
   return children;
-};
+}
 
-// Simple inline dashboard for now
-const DashboardPage: React.FC = () => {
-  return (
-    <div style={{ padding: "1.5rem" }}>
-      <h1>Elysium CRM Dashboard</h1>
-      <p>Welcome! You are logged in.</p>
-    </div>
-  );
-};
-
-const AppShell: React.FC = () => {
+function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<DashboardPage />} />
-      <Route path="/compliance" element={<CompliancePage />} />
-      <Route path="/leads" element={<LeadsPage />} />
-      <Route path="/leads/new" element={<NewLeadPage />} />
-      <Route path="/leads/:id" element={<LeadDetailPage />} />
-      {/* Future: add /calls, /tasks, etc. routes here */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* Root: just send to /leads */}
+      <Route path="/" element={<Navigate to="/leads" replace />} />
+
+      {/* Login is public */}
+      <Route path="/login" element={<LoginPage />} />
+
+      {/* Leads list */}
+      <Route
+        path="/leads"
+        element={
+          <RequireAuth>
+            <LeadsIndex />
+          </RequireAuth>
+        }
+      />
+
+      {/* New lead */}
+      <Route
+        path="/leads/new"
+        element={
+          <RequireAuth>
+            <NewLeadPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Lead detail */}
+      <Route
+        path="/leads/:id"
+        element={
+          <RequireAuth>
+            <LeadDetailPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Admin compliance dashboard */}
+      <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <AdminPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Fallback */}
+      <Route path="*" element={<Navigate to="/leads" replace />} />
     </Routes>
   );
-};
+}
 
-const App: React.FC = () => {
+export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          {/* Public route */}
-          <Route path="/login" element={<LoginPage />} />
-          {/* Protected app */}
-          <Route
-            path="/*"
-            element={
-              <ProtectedRoute>
-                <AppShell />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
+        <AppRoutes />
       </AuthProvider>
     </BrowserRouter>
   );
-};
-
-export default App;
+}
 
