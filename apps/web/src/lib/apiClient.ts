@@ -214,3 +214,13 @@ export async function getAuditEvents(leadId: string) {
   });
 }
 
+// -----------------------------------------------------------------------------
+// COMPLIANCE HISTORY
+// -----------------------------------------------------------------------------
+
+export async function getComplianceHistory(leadId: string) {
+  return apiFetch<{ history: any[] }>(`/api/compliance/history/${leadId}`, {
+    method: "GET",
+  });
+}
+

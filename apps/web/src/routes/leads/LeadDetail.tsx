@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { getLeadById, runPreCallCheck, updateLead } from "../../lib/apiClient";
 import { useAuth } from "../../lib/auth";
 import { AuditLogPanel } from "./AuditLogPanel";
+import { ComplianceHistoryPanel } from "./ComplianceHistoryPanel";
+
 
 // Local types (mirror the API payloads) so we don't depend on shared-types.
 
@@ -790,6 +792,9 @@ const LeadDetailPage: React.FC = () => {
           </div>
         )}
       </section>
+     
+      {/* Past compliance checks for this lead */}
+      <ComplianceHistoryPanel leadId={lead.id} />
 
       {/* 🔍 Audit log panel for this lead */}
       <AuditLogPanel leadId={lead.id} />

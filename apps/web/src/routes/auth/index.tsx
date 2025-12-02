@@ -1,25 +1,26 @@
 import React, { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../lib/auth";
-import { login as apiLogin } from "../../lib/apiClient";
-import type { LoginRequestDto } from "@elysium-crm/shared-types/dto/auth";
+import { login as apiLogin, setAccessToken } from "../../lib/apiClient";
+
+interface LoginFormState {
+  email: string;
+  password: string;
+}
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuth();
+  const { setUser } = useAuth() as {
+    setUser: (user: any | null) => void;
+  };
 
-  const [form, setForm] = useState<LoginRequestDto>({
-    email: "",
-    password: "",
+  const [form, setForm] = useState<LoginFormState>({
+    email: "admin@example.com",
+    password: "Password123!",
   });
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  // Read `reason` query param (e.g. ?reason=session_expired)
-  const searchParams = new URLSearchParams(location.search);
-  const reason = searchParams.get("reason");
-  const sessionExpired = reason === "session_expired";
+  const [submitting, setSubmitting] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -28,18 +29,31 @@ const LoginPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
     setError(null);
-    setLoading(true);
 
     try {
-      const resp = await apiLogin(form);
-      login(resp);
-      navigate("/", { replace: true });
+      const data = await apiLogin({
+        email: form.email,
+        password: form.password,
+      });
+
+      // data should be { accessToken, user }
+      setAccessToken(data.accessToken);
+      setUser(data.user);
+
+      // If we were redirected here from a protected route, go back there,
+      // otherwise default to /leads
+      const state = location.state as any;
+      const redirectTo = state?.from?.pathname || "/leads";
+
+      navigate(redirectTo, { replace: true });
     } catch (err: any) {
-      console.error("Login failed", err);
-      setError(err?.message || "Invalid email or password.");
+      const msg =
+        err instanceof Error ? err.message : "Login failed. Please try again.";
+      setError(msg);
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -50,43 +64,28 @@ const LoginPage: React.FC = () => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: "1.5rem",
+        background: "#f3f4f6",
       }}
     >
-      <form
-        onSubmit={handleSubmit}
+      <div
         style={{
           maxWidth: 400,
           width: "100%",
-          border: "1px solid #ddd",
+          padding: "2rem",
           borderRadius: 8,
-          padding: "1.5rem",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
-          backgroundColor: "#fff",
+          background: "#ffffff",
+          boxShadow: "0 10px 30px rgba(15,23,42,0.12)",
         }}
       >
-        <h1 style={{ marginBottom: "1rem" }}>Elysium CRM Login</h1>
-
-        {sessionExpired && (
-          <div
-            style={{
-              marginBottom: "0.75rem",
-              padding: "0.75rem",
-              borderRadius: 4,
-              backgroundColor: "#fef9c3",
-              color: "#854d0e",
-              fontSize: 14,
-            }}
-          >
-            Your session has expired. Please sign in again.
-          </div>
-        )}
+        <h1 style={{ fontSize: "1.5rem", marginBottom: "1rem" }}>
+          Elysium CRM Login
+        </h1>
 
         {error && (
           <div
             style={{
-              marginBottom: "1rem",
-              padding: "0.75rem",
+              marginBottom: "0.75rem",
+              padding: "0.5rem 0.75rem",
               borderRadius: 4,
               backgroundColor: "#fee2e2",
               color: "#b91c1c",
@@ -97,69 +96,71 @@ const LoginPage: React.FC = () => {
           </div>
         )}
 
-        <div style={{ marginBottom: "0.75rem" }}>
-          <label
-            htmlFor="email"
-            style={{ display: "block", marginBottom: 4, fontSize: 14 }}
-          >
-            Email
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            value={form.email}
-            onChange={handleChange}
-            required
-            style={{
-              width: "100%",
-              padding: "0.5rem 0.75rem",
-              borderRadius: 4,
-              border: "1px solid #ccc",
-            }}
-          />
-        </div>
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.75rem" }}>
+          <div>
+            <label
+              htmlFor="email"
+              style={{ display: "block", marginBottom: 4, fontSize: 14 }}
+            >
+              Email
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value={form.email}
+              onChange={handleChange}
+              autoComplete="email"
+              style={{
+                width: "100%",
+                padding: 8,
+                borderRadius: 4,
+                border: "1px solid #d1d5db",
+              }}
+            />
+          </div>
 
-        <div style={{ marginBottom: "1rem" }}>
-          <label
-            htmlFor="password"
-            style={{ display: "block", marginBottom: 4, fontSize: 14 }}
-          >
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            value={form.password}
-            onChange={handleChange}
-            required
-            style={{
-              width: "100%",
-              padding: "0.5rem 0.75rem",
-              borderRadius: 4,
-              border: "1px solid #ccc",
-            }}
-          />
-        </div>
+          <div>
+            <label
+              htmlFor="password"
+              style={{ display: "block", marginBottom: 4, fontSize: 14 }}
+            >
+              Password
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              value={form.password}
+              onChange={handleChange}
+              autoComplete="current-password"
+              style={{
+                width: "100%",
+                padding: 8,
+                borderRadius: 4,
+                border: "1px solid #d1d5db",
+              }}
+            />
+          </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            width: "100%",
-            padding: "0.6rem 0.75rem",
-            borderRadius: 4,
-            border: "none",
-            backgroundColor: "#2563eb",
-            color: "#fff",
-            fontWeight: 600,
-            cursor: loading ? "wait" : "pointer",
-          }}
-        >
-          {loading ? "Logging in…" : "Login"}
-        </button>
-      </form>
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              marginTop: "0.5rem",
+              padding: "0.6rem 1rem",
+              borderRadius: 4,
+              border: "none",
+              backgroundColor: "#2563eb",
+              color: "#ffffff",
+              fontWeight: 500,
+              cursor: submitting ? "default" : "pointer",
+            }}
+          >
+            {submitting ? "Logging in..." : "Login"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 };

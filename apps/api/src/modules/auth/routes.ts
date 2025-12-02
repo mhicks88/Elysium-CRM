@@ -18,7 +18,7 @@ const DEV_USERS: UserWithPassword[] = [
     id: "admin-1",
     email: "admin@example.com",
     role: "ADMIN",
-    organizationId: "org-1",
+    organizationId: "demo-org",
     password: "Password123!",
   },
 ];

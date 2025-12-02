@@ -7,6 +7,7 @@ import {
 } from "../../middleware/auth";
 import { runPreCallChecks } from "./preCallComplianceService";
 import { recordAuditEvent } from "../audit/service";
+import { recordComplianceCheck } from "../complianceHistory/service";
 
 export const complianceRouter = Router();
 
@@ -26,14 +27,15 @@ complianceRouter.post(
     }
 
     try {
+      // Run compliance logic
       const result = await runPreCallChecks({
         leadId,
-        agentUserId: user.id,              // 👈 renamed from userId → agentUserId
+        agentUserId: user.id, // correct parameter for preCallComplianceService
         purpose,
         callSessionId: callSessionId ?? null,
       });
 
-      // Audit: compliance check
+      // 1️⃣ AUDIT EVENT (high-level activity)
       await recordAuditEvent({
         userId: user.id,
         leadId,
@@ -43,6 +45,15 @@ complianceRouter.post(
           callSessionId: callSessionId ?? null,
           result,
         },
+      });
+
+      // 2️⃣ STRUCTURED COMPLIANCE HISTORY RECORD
+      await recordComplianceCheck({
+        leadId,
+        userId: user.id,
+        purpose,
+        status: result.status, // PASS / FAIL
+        result,
       });
 
       return res.json(result);
