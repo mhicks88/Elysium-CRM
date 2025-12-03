@@ -1,269 +1,249 @@
 // apps/web/src/routes/leads/NewLead.tsx
+import React, { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { AppShell } from "../../components/layout/AppShell";
+import { Card } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
 
-import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import {
-  createLead,
-} from "../../lib/apiClient";
+type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
 
-interface FormState {
+interface CreateLeadPayload {
   firstName: string;
   lastName: string;
-  phone: string;
-  email: string;
-  state: string;
-  zip: string;
-  timezone: string;
-  notes: string;
-  permissionToContactPhone: boolean;
-  doNotContact: boolean;
+  email?: string | null;
+  phone?: string | null;
+  state?: string | null;
+  status?: LeadStatus;
 }
 
-export default function NewLead() {
-  const navigate = useNavigate();
-  const [form, setForm] = useState<FormState>({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    email: "",
-    state: "",
-    zip: "",
-    timezone: "",
-    notes: "",
-    permissionToContactPhone: false,
-    doNotContact: false,
+/**
+ * Local helper to create a lead via the API.
+ * We keep apiClient.ts untouched and just POST directly.
+ */
+async function createLead(payload: CreateLeadPayload) {
+  const res = await fetch("/api/leads", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
   });
 
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function handleChange(
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) {
-    const { name, value, type, checked } = e.target;
-    setForm((prev) => ({
-      ...prev,
-      [name]: type === "checkbox" ? checked : value,
-    }));
+  if (!res.ok) {
+    let message = `Failed to create lead (status ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
+  const data = await res.json();
+  return data as { id: string };
+}
 
-    if (!form.firstName.trim() || !form.lastName.trim() || !form.phone.trim()) {
-      setError("First name, last name, and phone are required.");
-      return;
-    }
+const NewLeadPage: React.FC = () => {
+  const navigate = useNavigate();
+
+  const [firstName, setFirstName] = useState<string>("");
+  const [lastName, setLastName] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+  const [phone, setPhone] = useState<string>("");
+  const [state, setState] = useState<string>("");
+
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit =
+    firstName.trim().length > 0 && lastName.trim().length > 0;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
 
     setSubmitting(true);
+    setError(null);
+
     try {
-      const payload = {
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
-        phone: form.phone.trim(),
-        email: form.email.trim() || null,
-        state: form.state.trim() || null,
-        zip: form.zip.trim() || null,
-        timezone: form.timezone.trim() || null,
-        notes: form.notes.trim() || null,
-        permissionToContactPhone: form.permissionToContactPhone,
-        doNotContact: form.doNotContact,
-        assignedToId: null,
+      const payload: CreateLeadPayload = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim() || null,
+        phone: phone.trim() || null,
+        state: state.trim() || null,
+        status: "NEW",
       };
 
       const created = await createLead(payload);
 
       // Navigate to the new lead's detail page
-      navigate(`/leads/${created.id}`);
+      if (created?.id) {
+        navigate(`/leads/${created.id}`);
+      } else {
+        navigate("/leads");
+      }
     } catch (err: any) {
-      console.error(err);
-      setError(err?.message ?? "Failed to create lead.");
+      setError(err?.message ?? "Failed to create lead");
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem" }}>
-      <h1 style={{ fontSize: "1.5rem", marginBottom: "1rem" }}>
-        Create New Lead
-      </h1>
-
-      {error && (
+    <AppShell>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-6)",
+        }}
+      >
+        {/* Header */}
         <div
           style={{
-            marginBottom: "1rem",
-            padding: "0.75rem 1rem",
-            borderRadius: 4,
-            border: "1px solid #f87171",
-            backgroundColor: "#fef2f2",
-            color: "#b91c1c",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "var(--space-4)",
           }}
         >
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.75rem" }}>
-        <div style={{ display: "flex", gap: "0.75rem" }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", fontSize: "0.875rem" }}>
-              First Name *
-            </label>
-            <input
-              name="firstName"
-              value={form.firstName}
-              onChange={handleChange}
-              required
-              style={{ width: "100%", padding: "0.5rem" }}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", fontSize: "0.875rem" }}>
-              Last Name *
-            </label>
-            <input
-              name="lastName"
-              value={form.lastName}
-              onChange={handleChange}
-              required
-              style={{ width: "100%", padding: "0.5rem" }}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label style={{ display: "block", fontSize: "0.875rem" }}>
-            Phone *
-          </label>
-          <input
-            name="phone"
-            value={form.phone}
-            onChange={handleChange}
-            required
-            style={{ width: "100%", padding: "0.5rem" }}
-          />
-        </div>
-
-        <div>
-          <label style={{ display: "block", fontSize: "0.875rem" }}>
-            Email
-          </label>
-          <input
-            name="email"
-            type="email"
-            value={form.email}
-            onChange={handleChange}
-            style={{ width: "100%", padding: "0.5rem" }}
-          />
-        </div>
-
-        <div style={{ display: "flex", gap: "0.75rem" }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", fontSize: "0.875rem" }}>
-              State
-            </label>
-            <input
-              name="state"
-              value={form.state}
-              onChange={handleChange}
-              style={{ width: "100%", padding: "0.5rem" }}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", fontSize: "0.875rem" }}>
-              ZIP
-            </label>
-            <input
-              name="zip"
-              value={form.zip}
-              onChange={handleChange}
-              style={{ width: "100%", padding: "0.5rem" }}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label style={{ display: "block", fontSize: "0.875rem" }}>
-            Timezone
-          </label>
-          <input
-            name="timezone"
-            value={form.timezone}
-            onChange={handleChange}
-            placeholder="e.g. America/New_York"
-            style={{ width: "100%", padding: "0.5rem" }}
-          />
-        </div>
-
-        <div>
-          <label style={{ display: "block", fontSize: "0.875rem" }}>
-            Notes
-          </label>
-          <textarea
-            name="notes"
-            value={form.notes}
-            onChange={handleChange}
-            rows={3}
-            style={{ width: "100%", padding: "0.5rem" }}
-          />
-        </div>
-
-        <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <input
-              type="checkbox"
-              name="permissionToContactPhone"
-              checked={form.permissionToContactPhone}
-              onChange={handleChange}
-            />
-            Permission to contact by phone
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <input
-              type="checkbox"
-              name="doNotContact"
-              checked={form.doNotContact}
-              onChange={handleChange}
-            />
-            Do not contact
-          </label>
-        </div>
-
-        <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
-          <button
-            type="submit"
-            disabled={submitting}
+          <div
             style={{
-              padding: "0.5rem 1rem",
-              borderRadius: 4,
-              border: "none",
-              backgroundColor: submitting ? "#9ca3af" : "#2563eb",
-              color: "white",
-              cursor: submitting ? "default" : "pointer",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
             }}
           >
-            {submitting ? "Creating..." : "Create Lead"}
-          </button>
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              <Link to="/leads">← Back to leads</Link>
+            </div>
+            <h1
+              style={{
+                fontSize: "var(--text-2xl)",
+                fontWeight: 600,
+              }}
+            >
+              New lead
+            </h1>
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+                maxWidth: "40rem",
+              }}
+            >
+              Capture a new lead with just the minimum information required to
+              start a compliant outreach workflow.
+            </p>
+          </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={() => navigate("/leads")}
+        <Card
+          title="Lead details"
+          description="You can always enrich this record later. First and last name are required."
+        >
+          {error && (
+            <div
+              style={{
+                marginBottom: "var(--space-3)",
+                fontSize: "var(--text-sm)",
+                color: "var(--color-danger)",
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          <form
+            onSubmit={handleSubmit}
             style={{
-              padding: "0.5rem 1rem",
-              borderRadius: 4,
-              border: "1px solid #d1d5db",
-              backgroundColor: "white",
-              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--space-5)",
             }}
           >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "var(--space-4)",
+              }}
+            >
+              <Input
+                label="First name"
+                requiredLabel
+                placeholder="Jane"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+              <Input
+                label="Last name"
+                requiredLabel
+                placeholder="Doe"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+              <Input
+                label="Email"
+                placeholder="jane.doe@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Input
+                label="Phone"
+                placeholder="+1 (555) 555-1234"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+              <Input
+                label="State"
+                placeholder="CA"
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "var(--space-3)",
+              }}
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate("/leads")}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                isLoading={submitting}
+                disabled={submitting || !canSubmit}
+              >
+                Create lead
+              </Button>
+            </div>
+          </form>
+        </Card>
+      </div>
+    </AppShell>
   );
-}
+};
+
+export default NewLeadPage;
 

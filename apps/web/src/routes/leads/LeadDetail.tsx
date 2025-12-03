@@ -1,14 +1,29 @@
+// apps/web/src/routes/leads/LeadDetail.tsx
+
 import React, { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { getLeadById, runPreCallCheck, updateLead } from "../../lib/apiClient";
-import { useAuth } from "../../lib/auth";
-import { AuditLogPanel } from "./AuditLogPanel";
+import { useParams, Link } from "react-router-dom";
+import { AppShell } from "../../components/layout/AppShell";
+import { Card } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
+import { Badge } from "../../components/ui/Badge";
+import { Input } from "../../components/ui/Input";
 import { ComplianceHistoryPanel } from "./ComplianceHistoryPanel";
-
-
-// Local types (mirror the API payloads) so we don't depend on shared-types.
+import { AuditLogPanel } from "./AuditLogPanel";
+import { EnrollmentPanel } from "../../components/enrollment/EnrollmentPanel";
+import { TasksPanel } from "../../components/tasks/TasksPanel";
+import { CallScriptPanel } from "./CallScriptPanel";
+import { getLeadById, updateLead } from "../../lib/apiClient";
+import { useAuth } from "../../lib/auth";
 
 type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
+
+type Role =
+  | "ADMIN"
+  | "AGENT"
+  | "VIEW_ONLY"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "COMPLIANCE_OFFICER";
 
 interface LeadDetail {
   id: string;
@@ -17,790 +32,588 @@ interface LeadDetail {
   email: string | null;
   phone: string | null;
   state: string | null;
-  zip: string | null;
   status: LeadStatus;
-  notes: string | null;
-  timezone: string | null;
-  permissionToContactPhone: boolean;
-  doNotContact: boolean;
   createdAt: string;
   updatedAt: string;
-  assignedToId: string | null;
-  assignedToName: string | null;
+  permissionToContactPhone: boolean;
+  doNotContact: boolean;
+  assignedToUserId?: string | null;
 }
 
-interface UpdateLeadRequest {
-  firstName?: string;
-  lastName?: string;
-  email?: string | null;
-  phone?: string | null;
-  state?: string | null;
-  zip?: string | null;
-  status?: LeadStatus;
-  notes?: string | null;
-  timezone?: string | null;
-  permissionToContactPhone?: boolean;
-  doNotContact?: boolean;
-  assignedToId?: string | null;
+const statusLabel: Record<LeadStatus, string> = {
+  NEW: "New",
+  IN_PROGRESS: "In progress",
+  ENROLLED: "Enrolled",
+  DO_NOT_CONTACT: "Do Not Contact",
+};
+
+function statusBadgeVariant(status: LeadStatus) {
+  switch (status) {
+    case "ENROLLED":
+      return "success" as const;
+    case "DO_NOT_CONTACT":
+      return "danger" as const;
+    case "IN_PROGRESS":
+      return "warning" as const;
+    case "NEW":
+    default:
+      return "neutral" as const;
+  }
 }
 
-type PlannedCallPurpose =
-  | "EDUCATION"
-  | "MARKETING"
-  | "ENROLLMENT"
-  | "SERVICE";
-
-type PreCallCheckStatus = "PASS" | "FAIL";
-
-interface PreCallCheckResult {
-  status: PreCallCheckStatus;
-  reasons: string[];
-  checks: {
-    type: string;
-    status: "PASS" | "FAIL" | "SKIPPED";
-    message?: string;
-  }[];
+/**
+ * Fetch a single lead by ID using the dedicated API.
+ */
+async function fetchLeadById(leadId: string): Promise<LeadDetail> {
+  const data = await getLeadById(leadId);
+  return data as LeadDetail;
 }
-
-const statusOptions: LeadStatus[] = [
-  "NEW",
-  "IN_PROGRESS",
-  "ENROLLED",
-  "DO_NOT_CONTACT",
-];
-
-const purposeOptions: PlannedCallPurpose[] = [
-  "EDUCATION",
-  "MARKETING",
-  "ENROLLMENT",
-  "SERVICE",
-];
 
 const LeadDetailPage: React.FC = () => {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const { user } = useAuth() as { user: { role: string } | null };
+  const params = useParams<{ id: string }>();
+  const leadId = params.id ?? "";
 
-  const canEditLead =
-    user && (user.role === "ADMIN" || user.role === "AGENT");
-  const canRunCompliance = canEditLead; // same roles for now
+  const { user } = useAuth() as { user: any | null };
+  const userRole = (user?.role ?? null) as Role | null;
+  const canEditAssignee =
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "DIRECTOR";
 
   const [lead, setLead] = useState<LeadDetail | null>(null);
-  const [form, setForm] = useState<UpdateLeadRequest>({});
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  // Editing state
   const [isEditing, setIsEditing] = useState(false);
-  const [isDirty, setIsDirty] = useState(false); // tracks unsaved edits
-
-  const [purpose, setPurpose] = useState<PlannedCallPurpose>("EDUCATION");
-  const [complianceResult, setComplianceResult] =
-    useState<PreCallCheckResult | null>(null);
-  const [complianceLoading, setComplianceLoading] = useState(false);
-  const [complianceError, setComplianceError] = useState<string | null>(null);
-
-  const syncFormFromLead = (data: LeadDetail) => {
-    setForm({
-      firstName: data.firstName,
-      lastName: data.lastName,
-      email: data.email,
-      phone: data.phone,
-      state: data.state,
-      zip: data.zip,
-      status: data.status,
-      notes: data.notes,
-      timezone: data.timezone,
-      permissionToContactPhone: data.permissionToContactPhone,
-      doNotContact: data.doNotContact,
-      assignedToId: data.assignedToId,
-    });
-  };
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editState, setEditState] = useState("");
+  const [editAssignee, setEditAssignee] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id) return;
+    if (!leadId) return;
 
-    const fetchLead = async () => {
+    let mounted = true;
+
+    async function load() {
       setLoading(true);
       setError(null);
       try {
-        const data = (await getLeadById(id)) as LeadDetail;
+        const data = await fetchLeadById(leadId);
+        if (!mounted) return;
         setLead(data);
-        syncFormFromLead(data);
-        setPurpose("EDUCATION");
-        setComplianceResult(null);
-        setIsEditing(false);
-        setIsDirty(false);
-        setSaveMessage(null);
+        // Initialize edit fields
+        setEditFirstName(data.firstName);
+        setEditLastName(data.lastName);
+        setEditEmail(data.email ?? "");
+        setEditPhone(data.phone ?? "");
+        setEditState(data.state ?? "");
+        setEditAssignee(data.assignedToUserId ?? "");
       } catch (err: any) {
-        const message =
-          err instanceof Error ? err.message : "Failed to load lead";
-        setError(message);
+        if (!mounted) return;
+        setError(err?.message ?? "Failed to load lead");
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
+    }
+
+    void load();
+    return () => {
+      mounted = false;
     };
+  }, [leadId]);
 
-    void fetchLead();
-  }, [id]);
+  const hasEdits =
+    lead &&
+    (editFirstName !== lead.firstName ||
+      editLastName !== lead.lastName ||
+      (editEmail || "") !== (lead.email || "") ||
+      (editPhone || "") !== (lead.phone || "") ||
+      (editState || "") !== (lead.state || "") ||
+      (canEditAssignee &&
+        (editAssignee || "") !== (lead.assignedToUserId || "")));
 
-  const updateField =
-    <K extends keyof UpdateLeadRequest>(key: K) =>
-    (value: UpdateLeadRequest[K]) => {
-      setForm((prev) => ({ ...prev, [key]: value }));
-      if (isEditing) {
-        setIsDirty(true);
-      }
-    };
-
-  const handleStartEdit = () => {
-    if (!lead || !canEditLead) return;
-    syncFormFromLead(lead);
-    setSaveMessage(null);
-    setError(null);
-    setIsEditing(true);
-    setIsDirty(false);
-  };
-
-  const handleCancelEdit = () => {
-    if (!lead) return;
-    syncFormFromLead(lead);
-    setIsEditing(false);
-    setSaving(false);
-    setError(null);
-    setIsDirty(false);
-    // keep last "Saved" message if there was one
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!id || !isEditing || !canEditLead) return;
+    if (!lead || !hasEdits) return;
 
     setSaving(true);
-    setSaveMessage(null);
-    setError(null);
+    setSaveError(null);
 
     try {
-      const updated = (await updateLead(id, form)) as LeadDetail;
+      const payload: Record<string, unknown> = {
+        firstName: editFirstName.trim(),
+        lastName: editLastName.trim(),
+        email: editEmail.trim() || null,
+        phone: editPhone.trim() || null,
+        state: editState.trim() || null,
+      };
+
+      if (canEditAssignee) {
+        payload.assignedToUserId = editAssignee.trim() || null;
+      }
+
+      await updateLead(lead.id, payload);
+
+      // Update local state to reflect the changes
+      const updated: LeadDetail = {
+        ...lead,
+        firstName: payload.firstName as string,
+        lastName: payload.lastName as string,
+        email: payload.email as string | null,
+        phone: payload.phone as string | null,
+        state: payload.state as string | null,
+        assignedToUserId: canEditAssignee
+          ? ((payload.assignedToUserId ?? null) as string | null)
+          : lead.assignedToUserId ?? null,
+        updatedAt: new Date().toISOString(),
+      };
       setLead(updated);
-      syncFormFromLead(updated);
-      setSaveMessage("Changes saved");
       setIsEditing(false);
-      setIsDirty(false);
     } catch (err: any) {
-      const message =
-        err instanceof Error ? err.message : "Failed to save lead";
-      setError(message);
+      setSaveError(err?.message ?? "Failed to save lead changes");
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleComplianceCheck = async () => {
-    if (!id || !canRunCompliance) return;
-
-    setComplianceLoading(true);
-    setComplianceError(null);
-    setComplianceResult(null);
-
-    try {
-      const result = (await runPreCallCheck({
-        leadId: id,
-        purpose,
-      })) as PreCallCheckResult;
-      setComplianceResult(result);
-    } catch (err: any) {
-      const message =
-        err instanceof Error ? err.message : "Failed to run check";
-      setComplianceError(message);
-    } finally {
-      setComplianceLoading(false);
-    }
-  };
-
-  const hasUnsavedChanges = isEditing && isDirty;
-
-  // Tab close / refresh protection
-  useEffect(() => {
-    if (!hasUnsavedChanges) return;
-
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [hasUnsavedChanges]);
-
-  const confirmNavigateAway = () => {
-    if (!hasUnsavedChanges) return true;
-    return window.confirm(
-      "You have unsaved changes. Are you sure you want to leave this page?"
-    );
-  };
-
-  const handleBackToLeads = () => {
-    if (!confirmNavigateAway()) return;
-    navigate(-1);
-  };
-
-  const handleErrorGoBack = () => {
-    if (!confirmNavigateAway()) return;
-    navigate(-1);
-  };
-
-  if (loading) {
-    return <div style={{ padding: "1.5rem" }}>Loading lead...</div>;
   }
 
-  if (error && !lead) {
-    return (
-      <div style={{ padding: "1.5rem" }}>
-        <p style={{ color: "red" }}>{error}</p>
-        <button
-          onClick={handleErrorGoBack}
-          style={{ marginTop: "0.5rem" }}
+  function handleCancelEdit() {
+    if (!lead) return;
+    setEditFirstName(lead.firstName);
+    setEditLastName(lead.lastName);
+    setEditEmail(lead.email ?? "");
+    setEditPhone(lead.phone ?? "");
+    setEditState(lead.state ?? "");
+    setEditAssignee(lead.assignedToUserId ?? "");
+    setSaveError(null);
+    setIsEditing(false);
+  }
+
+  function renderContactComplianceBanner(l: LeadDetail) {
+    if (l.doNotContact) {
+      return (
+        <div
+          style={{
+            borderRadius: "var(--radius-md)",
+            border: "1px solid rgba(248,113,113,0.5)",
+            backgroundColor: "rgba(127,29,29,0.3)",
+            padding: "var(--space-3)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.25rem",
+          }}
         >
-          Go back
-        </button>
+          <span
+            style={{
+              fontSize: "var(--text-sm)",
+              fontWeight: 600,
+              color: "var(--color-danger)",
+            }}
+          >
+            Do Not Contact (DNC)
+          </span>
+          <span
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--color-text-soft)",
+            }}
+          >
+            This lead is marked as DO NOT CONTACT. Outbound calls and
+            marketing outreach should not be initiated without formal
+            remediation and legal approval.
+          </span>
+        </div>
+      );
+    }
+
+    if (!l.permissionToContactPhone) {
+      return (
+        <div
+          style={{
+            borderRadius: "var(--radius-md)",
+            border: "1px solid rgba(251,191,36,0.6)",
+            backgroundColor: "rgba(120,53,15,0.35)",
+            padding: "var(--space-3)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.25rem",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "var(--text-sm)",
+              fontWeight: 600,
+              color: "var(--color-warning)",
+            }}
+          >
+            No phone permission on file
+          </span>
+          <span
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--color-text-soft)",
+            }}
+          >
+            This lead has not granted permission to be contacted by phone.
+            Ensure that permission is captured and documented before placing
+            outbound calls.
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        style={{
+          borderRadius: "var(--radius-md)",
+          border: "1px solid rgba(34,197,94,0.5)",
+          backgroundColor: "rgba(6,95,70,0.35)",
+          padding: "var(--space-3)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.25rem",
+        }}
+      >
+        <span
+          style={{
+            fontSize: "var(--text-sm)",
+            fontWeight: 600,
+            color: "var(--color-success)",
+          }}
+        >
+          Contact permitted
+        </span>
+        <span
+          style={{
+            fontSize: "var(--text-xs)",
+            color: "var(--color-text-soft)",
+          }}
+        >
+          This lead has granted permission to be contacted by phone and is not
+          marked as Do Not Contact.
+        </span>
       </div>
     );
   }
 
-  if (!lead) {
-    return null;
-  }
-
-  const inputBorder = isEditing ? "#2563eb" : "#ccc";
-  const inputBg = isEditing ? "#ffffff" : "#f9fafb";
-
   return (
-    <div style={{ padding: "1.5rem", display: "grid", gap: "1.5rem" }}>
-      <header
+    <AppShell>
+      <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          flexDirection: "column",
+          gap: "var(--space-6)",
         }}
       >
-        <div>
-          <h1>
-            {lead.firstName} {lead.lastName}
-          </h1>
-          <p style={{ color: "#6B7280" }}>
-            Status: {lead.status.replace(/_/g, " ")}
-          </p>
-          <p style={{ color: "#6B7280" }}>
-            Assigned to: {lead.assignedToName ?? "Unassigned"}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button onClick={handleBackToLeads}>Back to leads</button>
-        </div>
-      </header>
-
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          padding: "1rem",
-          borderRadius: 6,
-        }}
-      >
+        {/* Top heading + back link */}
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "0.75rem",
+            alignItems: "flex-start",
+            gap: "var(--space-4)",
           }}
         >
-          <h2>Lead details</h2>
-          {canEditLead && !isEditing && (
-            <button
-              type="button"
-              onClick={handleStartEdit}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
+            }}
+          >
+            <div
               style={{
-                padding: "0.4rem 0.9rem",
-                borderRadius: 4,
-                border: "1px solid #2563eb",
-                backgroundColor: "#2563eb",
-                color: "#fff",
-                cursor: "pointer",
-                fontSize: 14,
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
               }}
             >
-              Edit
-            </button>
-          )}
-          {canEditLead && isEditing && (
-            <button
-              type="button"
-              onClick={handleCancelEdit}
+              <Link to="/leads">← Back to leads</Link>
+            </div>
+            <h1
               style={{
-                padding: "0.4rem 0.9rem",
-                borderRadius: 4,
-                border: "1px solid #d1d5db",
-                backgroundColor: "#f9fafb",
-                color: "#374151",
-                cursor: "pointer",
-                fontSize: 14,
+                fontSize: "var(--text-2xl)",
+                fontWeight: 600,
               }}
             >
-              Cancel edit
-            </button>
+              Lead detail
+            </h1>
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+                maxWidth: "40rem",
+              }}
+            >
+              Single-lead view that ties together information, assignment,
+              compliance history, enrollment status, tasks, and scripted calls.
+            </p>
+          </div>
+
+          {lead && (
+            <Badge variant={statusBadgeVariant(lead.status)}>
+              {statusLabel[lead.status]}
+            </Badge>
           )}
         </div>
 
         {error && (
-          <div
-            style={{
-              marginBottom: "0.75rem",
-              padding: "0.75rem",
-              borderRadius: 4,
-              backgroundColor: "#fee2e2",
-              color: "#b91c1c",
-              fontSize: 14,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {saveMessage && !isEditing && (
-          <div
-            style={{
-              marginBottom: "0.75rem",
-              padding: "0.5rem 0.75rem",
-              borderRadius: 4,
-              backgroundColor: "#dcfce7",
-              color: "#166534",
-              fontSize: 13,
-            }}
-          >
-            {saveMessage}
-          </div>
-        )}
-
-        {hasUnsavedChanges && (
-          <div
-            style={{
-              marginBottom: "0.75rem",
-              padding: "0.5rem 0.75rem",
-              borderRadius: 4,
-              backgroundColor: "#fef9c3",
-              color: "#854d0e",
-              fontSize: 13,
-            }}
-          >
-            You have unsaved changes.
-          </div>
-        )}
-
-        <form
-          onSubmit={handleSubmit}
-          style={{ display: "grid", gap: "0.75rem", maxWidth: 720 }}
-        >
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="firstName"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                First name
-              </label>
-              <input
-                id="firstName"
-                type="text"
-                value={form.firstName ?? ""}
-                onChange={(e) => updateField("firstName")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="lastName"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                Last name
-              </label>
-              <input
-                id="lastName"
-                type="text"
-                value={form.lastName ?? ""}
-                onChange={(e) => updateField("lastName")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="email"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={form.email ?? ""}
-                onChange={(e) => updateField("email")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="phone"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                Phone
-              </label>
-              <input
-                id="phone"
-                type="tel"
-                value={form.phone ?? ""}
-                onChange={(e) => updateField("phone")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="state"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                State
-              </label>
-              <input
-                id="state"
-                type="text"
-                value={form.state ?? ""}
-                onChange={(e) => updateField("state")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="zip"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                ZIP
-              </label>
-              <input
-                id="zip"
-                type="text"
-                value={form.zip ?? ""}
-                onChange={(e) => updateField("zip")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="timezone"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                Timezone
-              </label>
-              <input
-                id="timezone"
-                type="text"
-                value={form.timezone ?? ""}
-                onChange={(e) => updateField("timezone")(e.target.value)}
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label
-                htmlFor="status"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                Status
-              </label>
-              <select
-                id="status"
-                value={form.status ?? "NEW"}
-                onChange={(e) =>
-                  updateField("status")(e.target.value as LeadStatus)
-                }
-                disabled={!isEditing || !canEditLead}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  borderRadius: 4,
-                  border: `1px solid ${inputBorder}`,
-                  backgroundColor: inputBg,
-                }}
-              >
-                {statusOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option.replace(/_/g, " ")}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label
-              htmlFor="notes"
-              style={{ display: "block", marginBottom: 4 }}
-            >
-              Notes
-            </label>
-            <textarea
-              id="notes"
-              value={form.notes ?? ""}
-              onChange={(e) => updateField("notes")(e.target.value)}
-              rows={4}
-              disabled={!isEditing || !canEditLead}
+          <Card title="Unable to load lead">
+            <p
               style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 4,
-                border: `1px solid ${inputBorder}`,
-                backgroundColor: inputBg,
-              }}
-            />
-          </div>
-
-          <div style={{ display: "flex", gap: "1.5rem" }}>
-            <label
-              style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-            >
-              <input
-                type="checkbox"
-                checked={!!form.permissionToContactPhone}
-                onChange={(e) =>
-                  updateField("permissionToContactPhone")(e.target.checked)
-                }
-                disabled={!isEditing || !canEditLead}
-              />
-              Permission to contact by phone
-            </label>
-            <label
-              style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-            >
-              <input
-                type="checkbox"
-                checked={!!form.doNotContact}
-                onChange={(e) =>
-                  updateField("doNotContact")(e.target.checked)
-                }
-                disabled={!isEditing || !canEditLead}
-              />
-              Do not contact
-            </label>
-          </div>
-
-          {isEditing && canEditLead && (
-            <div
-              style={{
-                display: "flex",
-                gap: "0.75rem",
-                alignItems: "center",
-                marginTop: "0.5rem",
+                fontSize: "var(--text-sm)",
+                color: "var(--color-danger)",
               }}
             >
-              <button
-                type="submit"
-                disabled={saving}
-                style={{
-                  padding: "0.6rem 1.25rem",
-                  borderRadius: 4,
-                  border: "none",
-                  backgroundColor: "#2563eb",
-                  color: "white",
-                  cursor: saving ? "default" : "pointer",
-                }}
+              {error}
+            </p>
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => window.location.reload()}
               >
-                {saving ? "Saving..." : "Save changes"}
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelEdit}
-                disabled={saving}
-                style={{
-                  padding: "0.6rem 1.1rem",
-                  borderRadius: 4,
-                  border: "1px solid #d1d5db",
-                  backgroundColor: "#f9fafb",
-                  color: "#374151",
-                  cursor: saving ? "default" : "pointer",
-                }}
-              >
-                Cancel
-              </button>
+                Reload page
+              </Button>
             </div>
-          )}
-        </form>
-      </section>
+          </Card>
+        )}
 
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          padding: "1rem",
-          borderRadius: 6,
-        }}
-      >
-        <h2>Pre-call compliance check</h2>
-        <div
-          style={{
-            display: "flex",
-            gap: "0.75rem",
-            alignItems: "center",
-            marginTop: "0.5rem",
-          }}
-        >
-          <select
-            value={purpose}
-            onChange={(e) =>
-              setPurpose(e.target.value as PlannedCallPurpose)
-            }
-            disabled={!canRunCompliance}
+        {loading && !lead && !error && (
+          <p
             style={{
-              padding: "0.5rem",
-              borderRadius: 4,
-              border: "1px solid " + (canRunCompliance ? "#ccc" : "#e5e7eb"),
-              backgroundColor: canRunCompliance ? "#ffffff" : "#f3f4f6",
+              fontSize: "var(--text-sm)",
+              color: "var(--color-text-soft)",
             }}
           >
-            {purposeOptions.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={handleComplianceCheck}
-            disabled={complianceLoading || !canRunCompliance}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: 4,
-              border: "none",
-              backgroundColor: canRunCompliance ? "#111827" : "#9ca3af",
-              color: "white",
-              cursor:
-                complianceLoading || !canRunCompliance
-                  ? "default"
-                  : "pointer",
-            }}
-          >
-            {complianceLoading
-              ? "Checking..."
-              : canRunCompliance
-              ? "Run check"
-              : "Insufficient permissions"}
-          </button>
-        </div>
-
-        {complianceError && (
-          <p style={{ color: "red", marginTop: "0.5rem" }}>
-            {complianceError}
+            Loading lead…
           </p>
         )}
 
-        {complianceResult && (
-          <div style={{ marginTop: "0.75rem" }}>
-            <p>
-              Overall status:{" "}
-              <strong>{complianceResult.status}</strong>
-            </p>
+        {lead && (
+          <>
+            {/* Contact compliance banner */}
+            {renderContactComplianceBanner(lead)}
 
-            {complianceResult.reasons.length > 0 && (
-              <ul>
-                {complianceResult.reasons.map((reason, idx) => (
-                  <li key={idx}>{reason}</li>
-                ))}
-              </ul>
-            )}
+            {/* Main two-column layout */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)",
+                gap: "var(--space-4)",
+                alignItems: "flex-start",
+              }}
+            >
+              {/* Left: lead info */}
+              <Card
+                title="Lead information"
+                description="Core contact, assignment, and status for this lead."
+                actions={
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "0.5rem",
+                      alignItems: "center",
+                    }}
+                  >
+                    {isEditing ? (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={saving}
+                          onClick={handleCancelEdit}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          isLoading={saving}
+                          disabled={saving || !hasEdits}
+                          onClick={handleSave}
+                        >
+                          Save changes
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setIsEditing(true)}
+                      >
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                }
+              >
+                {saveError && (
+                  <div
+                    style={{
+                      marginBottom: "var(--space-3)",
+                      fontSize: "var(--text-sm)",
+                      color: "var(--color-danger)",
+                    }}
+                  >
+                    {saveError}
+                  </div>
+                )}
 
-            <div style={{ marginTop: "0.5rem" }}>
-              {complianceResult.checks.map((check) => (
-                <div
-                  key={check.type}
+                <form
+                  onSubmit={handleSave}
                   style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 4,
-                    padding: "0.5rem",
-                    marginBottom: "0.5rem",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    gap: "var(--space-4)",
                   }}
                 >
-                  <div>
-                    <strong>{check.type}</strong>: {check.status}
-                  </div>
-                  {check.message && <div>{check.message}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>
-     
-      {/* Past compliance checks for this lead */}
-      <ComplianceHistoryPanel leadId={lead.id} />
+                  <Input
+                    label="First name"
+                    value={isEditing ? editFirstName : lead.firstName}
+                    onChange={(e) => setEditFirstName(e.target.value)}
+                    readOnly={!isEditing}
+                  />
+                  <Input
+                    label="Last name"
+                    value={isEditing ? editLastName : lead.lastName}
+                    onChange={(e) => setEditLastName(e.target.value)}
+                    readOnly={!isEditing}
+                  />
+                  <Input
+                    label="Email"
+                    value={isEditing ? editEmail : lead.email ?? ""}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    readOnly={!isEditing}
+                  />
+                  <Input
+                    label="Phone"
+                    value={isEditing ? editPhone : lead.phone ?? ""}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    readOnly={!isEditing}
+                  />
+                  <Input
+                    label="State"
+                    value={isEditing ? editState : lead.state ?? ""}
+                    onChange={(e) => setEditState(e.target.value)}
+                    readOnly={!isEditing}
+                  />
+                  <Input
+                    label="Status"
+                    value={statusLabel[lead.status]}
+                    readOnly
+                  />
+                  <Input
+                    label="Assigned to (userId)"
+                    value={
+                      isEditing ? editAssignee : lead.assignedToUserId ?? ""
+                    }
+                    onChange={(e) => setEditAssignee(e.target.value)}
+                    readOnly={!isEditing || !canEditAssignee}
+                    hint={
+                      canEditAssignee
+                        ? "Assign this lead to an agent by userId."
+                        : "Only admins, directors, and managers can change assignment."
+                    }
+                  />
+                </form>
 
-      {/* 🔍 Audit log panel for this lead */}
-      <AuditLogPanel leadId={lead.id} />
-    </div>
+                <div
+                  style={{
+                    marginTop: "var(--space-4)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "var(--space-3)",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: "var(--text-xs)",
+                      color: "var(--color-text-soft)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.15rem",
+                    }}
+                  >
+                    <span>
+                      Created:{" "}
+                      {new Date(
+                        lead.createdAt
+                      ).toLocaleString()}
+                    </span>
+                    <span>
+                      Last updated:{" "}
+                      {new Date(
+                        lead.updatedAt
+                      ).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Right: scripted call + compliance history & audit log */}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "var(--space-4)",
+                }}
+              >
+                <Card
+                  title="Scripted call"
+                  description="Interactive script to guide this call and capture a clean trail for compliance."
+                >
+                  <CallScriptPanel leadId={lead.id} />
+                </Card>
+
+                <Card
+                  title="Compliance history"
+                  description="Snapshot of prior compliance checks for this lead."
+                >
+                  <ComplianceHistoryPanel leadId={lead.id} />
+                </Card>
+
+                <Card
+                  title="Audit log"
+                  description="Recent actions taken on this lead."
+                >
+                  <AuditLogPanel leadId={lead.id} />
+                </Card>
+              </div>
+            </div>
+
+            {/* Bottom row: Enrollment + Tasks */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr)",
+                gap: "var(--space-4)",
+                alignItems: "flex-start",
+              }}
+            >
+              <Card
+                title="Enrollment journey"
+                description="Track where this lead is in the enrollment pipeline."
+              >
+                <EnrollmentPanel leadId={lead.id} />
+              </Card>
+
+              <Card
+                title="Tasks"
+                description="Operational tasks tied to this lead."
+              >
+                <TasksPanel leadId={lead.id} />
+              </Card>
+            </div>
+          </>
+        )}
+      </div>
+    </AppShell>
   );
 };
 
 export default LeadDetailPage;
-

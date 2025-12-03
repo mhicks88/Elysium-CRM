@@ -14,6 +14,7 @@ import LeadsIndex from "./routes/leads";
 import LeadDetailPage from "./routes/leads/LeadDetail";
 import NewLeadPage from "./routes/leads/NewLead";
 import AdminPage from "./routes/admin/Admin";
+import DashboardPage from "./routes/dashboard/Dashboard";
 
 // Simple guard: requires any authenticated user
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -37,11 +38,21 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 function AppRoutes() {
   return (
     <Routes>
-      {/* Root: just send to /leads */}
-      <Route path="/" element={<Navigate to="/leads" replace />} />
+      {/* Root: send to /dashboard */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
       {/* Login is public */}
       <Route path="/login" element={<LoginPage />} />
+
+      {/* Role-based home dashboard */}
+      <Route
+        path="/dashboard"
+        element={
+          <RequireAuth>
+            <DashboardPage />
+          </RequireAuth>
+        }
+      />
 
       {/* Leads list */}
       <Route
@@ -73,7 +84,7 @@ function AppRoutes() {
         }
       />
 
-      {/* Admin compliance dashboard */}
+      {/* Admin compliance & ops dashboard */}
       <Route
         path="/admin"
         element={
@@ -84,7 +95,7 @@ function AppRoutes() {
       />
 
       {/* Fallback */}
-      <Route path="*" element={<Navigate to="/leads" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 }

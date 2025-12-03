@@ -10,6 +10,7 @@ datasource db {
 enum UserRole {
   ADMIN
   MANAGER
+  DIRECTOR
   AGENT
   COMPLIANCE
   READ_ONLY
@@ -174,19 +175,25 @@ model Organization {
   deliveredDisclosures DeliveredDisclosure[]
   enrollments          Enrollment[]
   auditEvents          AuditEvent[]
+  enrollmentJourneys   EnrollmentJourney[]
+  complianceChecks     ComplianceCheck[]
+  // Interactive call scripts + runs
+  callScripts          CallScript[]
+  callScriptRuns       CallScriptRun[]
 }
 
 model User {
-  id                           String                        @id @default(cuid())
-  organizationId               String
-  firstName                    String
-  lastName                     String
-  email                        String                        @unique
-  passwordHash                 String
-  role                         UserRole
-  isActive                     Boolean                       @default(true)
-  createdAt                    DateTime                      @default(now())
-  updatedAt                    DateTime                      @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String
+  firstName      String
+  lastName       String
+  email          String   @unique
+  passwordHash   String
+  role           UserRole
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
   organization                 Organization                  @relation(fields: [organizationId], references: [id])
   leads                        Lead[]                        @relation("LeadAssignee")
   tasks                        Task[]                        @relation("TaskAssignee")
@@ -198,10 +205,25 @@ model User {
   enrollments                  Enrollment[]                  @relation("EnrollmentAgent")
   auditEvents                  AuditEvent[]                  @relation("AuditActor")
   leadContactPreferenceChanges LeadContactPreferenceChange[]
+  enrollmentJourneysUpdated    EnrollmentJourney[]           @relation("EnrollmentJourneyUpdater")
+  complianceChecks             ComplianceCheck[]             @relation("ComplianceCheckUser")
+
+  // NEW: interactive call script runs by this agent
+  callScriptRuns CallScriptRun[] @relation("CallScriptAgent")
+
+  // Manager → Agents hierarchy (self relation)
+  managerId String?
+  manager   User?   @relation("ManagerTeam", fields: [managerId], references: [id])
+  agents    User[]  @relation("ManagerTeam")
+
+  // Director → Managers hierarchy (self relation)
+  directorId String?
+  director   User?   @relation("DirectorTeam", fields: [directorId], references: [id])
+  managers   User[]  @relation("DirectorTeam")
 }
 
 model Lead {
-  id                       String                        @id @default(cuid())
+  id                       String     @id @default(cuid())
   organizationId           String
   firstName                String
   lastName                 String
@@ -223,8 +245,9 @@ model Lead {
   status                   LeadStatus
   assignedToUserId         String?
   notesSummary             String?
-  createdAt                DateTime                      @default(now())
-  updatedAt                DateTime                      @updatedAt
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+
   organization             Organization                  @relation(fields: [organizationId], references: [id])
   assignedTo               User?                         @relation("LeadAssignee", fields: [assignedToUserId], references: [id])
   tasks                    Task[]
@@ -234,6 +257,10 @@ model Lead {
   enrollments              Enrollment[]
   contactPreferenceChanges LeadContactPreferenceChange[]
   deliveredDisclosures     DeliveredDisclosure[]
+  enrollmentJourneys       EnrollmentJourney[]
+  complianceChecks         ComplianceCheck[]
+  // Interactive call script runs for this lead
+  callScriptRuns           CallScriptRun[]
 }
 
 model LeadContactPreferenceChange {
@@ -264,9 +291,10 @@ model Task {
   completedAt      DateTime?
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  lead             Lead         @relation(fields: [leadId], references: [id])
-  assignedTo       User         @relation("TaskAssignee", fields: [assignedToUserId], references: [id])
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lead         Lead         @relation(fields: [leadId], references: [id])
+  assignedTo   User         @relation("TaskAssignee", fields: [assignedToUserId], references: [id])
 }
 
 model Note {
@@ -299,22 +327,23 @@ model DialerIntegration {
 }
 
 model CallSession {
-  id                   String                @id @default(cuid())
-  organizationId       String
-  leadId               String
-  agentId              String
-  dialerIntegrationId  String
-  externalCallId       String
-  direction            CallDirection
-  purpose              CallPurpose
-  status               CallStatus
-  complianceState      ComplianceState
-  startedAt            DateTime              @default(now())
-  connectedAt          DateTime?
-  endedAt              DateTime?
-  recordingUrl         String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  id                  String          @id @default(cuid())
+  organizationId      String
+  leadId              String
+  agentId             String
+  dialerIntegrationId String
+  externalCallId      String
+  direction           CallDirection
+  purpose             CallPurpose
+  status              CallStatus
+  complianceState     ComplianceState
+  startedAt           DateTime        @default(now())
+  connectedAt         DateTime?
+  endedAt             DateTime?
+  recordingUrl        String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
   organization         Organization          @relation(fields: [organizationId], references: [id])
   lead                 Lead                  @relation(fields: [leadId], references: [id])
   agent                User                  @relation("CallAgent", fields: [agentId], references: [id])
@@ -364,59 +393,63 @@ model ScopeOfAppointment {
   expiresAt             DateTime?
   createdAt             DateTime                          @default(now())
   updatedAt             DateTime                          @updatedAt
-  organization          Organization                      @relation(fields: [organizationId], references: [id])
-  lead                  Lead                              @relation(fields: [leadId], references: [id])
-  agent                 User                              @relation("SOAAgent", fields: [agentId], references: [id])
-  callSession           CallSession?                      @relation(fields: [callSessionId], references: [id])
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lead         Lead         @relation(fields: [leadId], references: [id])
+  agent        User         @relation("SOAAgent", fields: [agentId], references: [id])
+  callSession  CallSession? @relation(fields: [callSessionId], references: [id])
 }
 
 model Script {
-  id                     String                @id @default(cuid())
+  id                     String         @id @default(cuid())
   organizationId         String
   key                    String
   name                   String
   description            String?
   category               ScriptCategory
   applicableProductTypes String[]
-  isActive               Boolean               @default(true)
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
-  organization           Organization          @relation(fields: [organizationId], references: [id])
-  steps                  ScriptStep[]
-  deliveredDisclosures   DeliveredDisclosure[]
+  isActive               Boolean        @default(true)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  organization         Organization          @relation(fields: [organizationId], references: [id])
+  steps                ScriptStep[]
+  deliveredDisclosures DeliveredDisclosure[]
 }
 
 model ScriptStep {
-  id                   String                @id @default(cuid())
-  scriptId             String
-  order                Int
-  key                  String
-  content              String
-  isRequired           Boolean
+  id         String  @id @default(cuid())
+  scriptId   String
+  order      Int
+  key        String
+  content    String
+  isRequired Boolean
+
   script               Script                @relation(fields: [scriptId], references: [id])
   deliveredDisclosures DeliveredDisclosure[]
 }
 
 model DeliveredDisclosure {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   scriptId       String
   scriptStepId   String
   callSessionId  String
   agentId        String
   leadId         String
-  deliveredAt    DateTime     @default(now())
+  deliveredAt    DateTime @default(now())
   notes          String?
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  script         Script       @relation(fields: [scriptId], references: [id])
-  scriptStep     ScriptStep   @relation(fields: [scriptStepId], references: [id])
-  callSession    CallSession  @relation(fields: [callSessionId], references: [id])
-  agent          User         @relation("DisclosureAgent", fields: [agentId], references: [id])
-  lead           Lead         @relation(fields: [leadId], references: [id])
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  script       Script       @relation(fields: [scriptId], references: [id])
+  scriptStep   ScriptStep   @relation(fields: [scriptStepId], references: [id])
+  callSession  CallSession  @relation(fields: [callSessionId], references: [id])
+  agent        User         @relation("DisclosureAgent", fields: [agentId], references: [id])
+  lead         Lead         @relation(fields: [leadId], references: [id])
 }
 
 model Enrollment {
-  id             String                   @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   leadId         String
   agentId        String
@@ -424,13 +457,14 @@ model Enrollment {
   planNameOrId   String
   effectiveDate  DateTime
   status         EnrollmentStatus
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  organization   Organization             @relation(fields: [organizationId], references: [id])
-  lead           Lead                     @relation(fields: [leadId], references: [id])
-  agent          User                     @relation("EnrollmentAgent", fields: [agentId], references: [id])
-  callSession    CallSession?             @relation(fields: [callSessionId], references: [id])
-  verifications  EnrollmentVerification[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization  Organization             @relation(fields: [organizationId], references: [id])
+  lead          Lead                     @relation(fields: [leadId], references: [id])
+  agent         User                     @relation("EnrollmentAgent", fields: [agentId], references: [id])
+  callSession   CallSession?             @relation(fields: [callSessionId], references: [id])
+  verifications EnrollmentVerification[]
 }
 
 model EnrollmentVerification {
@@ -443,18 +477,149 @@ model EnrollmentVerification {
   outcome       EnrollmentVerificationOutcome
   notes         String?
   createdAt     DateTime                      @default(now())
-  enrollment    Enrollment                    @relation(fields: [enrollmentId], references: [id])
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id])
 }
 
 model AuditEvent {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   entityType     String
   entityId       String
   eventType      String
   actorUserId    String?
   metadata       Json
-  createdAt      DateTime     @default(now())
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  actor          User?        @relation("AuditActor", fields: [actorUserId], references: [id])
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  actor        User?        @relation("AuditActor", fields: [actorUserId], references: [id])
+}
+
+enum EnrollmentJourneyStage {
+  NOT_STARTED
+  DISCOVERY
+  UNDER_REVIEW
+  PENDING_DOCS
+  ENROLLED
+  WITHDRAWN
+}
+
+model EnrollmentJourney {
+  id              String                 @id @default(cuid())
+  organizationId  String
+  leadId          String
+  stage           EnrollmentJourneyStage
+  notes           String?
+  updatedByUserId String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lead         Lead         @relation(fields: [leadId], references: [id])
+  updatedBy    User?        @relation("EnrollmentJourneyUpdater", fields: [updatedByUserId], references: [id])
+}
+
+model ComplianceCheck {
+  id             String   @id @default(cuid())
+  organizationId String
+  leadId         String
+  userId         String
+  purpose        String
+  status         String // "PASS" | "FAIL" (and optionally SKIPPED)
+  result         Json
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lead         Lead         @relation(fields: [leadId], references: [id])
+  user         User         @relation("ComplianceCheckUser", fields: [userId], references: [id])
+}
+
+//
+// Interactive Call Scripts & Runs
+//
+
+model CallScript {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  purpose        String // e.g. "INITIAL_OUTREACH", "FOLLOW_UP", etc.
+  description    String?
+  isActive       Boolean  @default(true)
+  entryNodeId    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  nodes        CallScriptNode[]
+  runs         CallScriptRun[]
+
+  @@index([organizationId, purpose, isActive])
+}
+
+model CallScriptNode {
+  id         String   @id @default(cuid())
+  scriptId   String
+  label      String?
+  content    String
+  isTerminal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  script  CallScript         @relation(fields: [scriptId], references: [id])
+  options CallScriptOption[]
+
+  @@index([scriptId])
+}
+
+model CallScriptOption {
+  id         String   @id @default(cuid())
+  nodeId     String
+  label      String
+  nextNodeId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  node CallScriptNode @relation(fields: [nodeId], references: [id])
+
+  @@index([nodeId])
+  @@index([nextNodeId])
+}
+
+model CallScriptRun {
+  id             String    @id @default(cuid())
+  organizationId String
+  scriptId       String
+  leadId         String
+  agentId        String
+  status         String // "IN_PROGRESS" | "COMPLETED" | "ABANDONED"
+  outcome        String?
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  script       CallScript   @relation(fields: [scriptId], references: [id])
+  lead         Lead         @relation(fields: [leadId], references: [id])
+  agent        User         @relation("CallScriptAgent", fields: [agentId], references: [id])
+
+  steps CallScriptRunStep[]
+
+  @@index([organizationId, leadId])
+  @@index([scriptId])
+  @@index([agentId])
+}
+
+model CallScriptRunStep {
+  id        String   @id @default(cuid())
+  runId     String
+  nodeId    String
+  optionId  String?
+  createdAt DateTime @default(now())
+
+  run CallScriptRun @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([nodeId])
+  @@index([optionId])
 }

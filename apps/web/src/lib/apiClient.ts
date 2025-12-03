@@ -209,9 +209,13 @@ export async function createLead(payload: Record<string, unknown>) {
 // -----------------------------------------------------------------------------
 
 export async function getAuditEvents(leadId: string) {
-  return apiFetch<{ events: any[] }>(`/api/audit/${leadId}`, {
-    method: "GET",
-  });
+  // Backend now returns { events, nextCursor }, but the UI can ignore nextCursor for now.
+  return apiFetch<{ events: any[]; nextCursor?: string | null }>(
+    `/api/audit/${leadId}`,
+    {
+      method: "GET",
+    }
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -291,5 +295,191 @@ export async function getRecentComplianceFailures(limit = 20) {
       createdAt: string;
     }[];
   }>(url, { method: "GET" });
+}
+
+// -----------------------------------------------------------------------------
+// CALL SCRIPTS (INTERACTIVE)
+// -----------------------------------------------------------------------------
+
+export type CallScriptNode = {
+  id: string;
+  label: string | null;
+  content: string;
+  isTerminal: boolean;
+  options: {
+    id: string;
+    label: string;
+    nextNodeId: string | null;
+  }[];
+};
+
+export type CallScript = {
+  id: string;
+  name: string;
+  purpose: string;
+  description: string | null;
+  isActive: boolean;
+  entryNodeId: string | null;
+  nodes: CallScriptNode[];
+};
+
+export type ScriptRunStatus = "IN_PROGRESS" | "COMPLETED" | "ABANDONED";
+
+export type CallScriptRunSummary = {
+  id: string;
+  scriptId: string;
+  scriptName: string;
+  purpose: string;
+  status: string;
+  outcome: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  agentId: string;
+};
+
+/**
+ * List active scripts for the current org.
+ * Optional filter by purpose.
+ */
+export async function getCallScripts(purpose?: string) {
+  const qs = purpose ? `?purpose=${encodeURIComponent(purpose)}` : "";
+  return apiFetch<{ scripts: CallScript[] }>(
+    `/api/call-scripts${qs}`,
+    { method: "GET" }
+  );
+}
+
+/**
+ * Fetch a single script by id.
+ */
+export async function getCallScriptById(scriptId: string) {
+  return apiFetch<{ script: CallScript }>(
+    `/api/call-scripts/${encodeURIComponent(scriptId)}`,
+    { method: "GET" }
+  );
+}
+
+/**
+ * Start a new script run for a lead.
+ * Either pass scriptId, or purpose to auto-resolve the script.
+ */
+export async function startCallScriptRun(params: {
+  leadId: string;
+  scriptId?: string;
+  purpose?: string;
+}) {
+  return apiFetch<{
+    runId: string;
+    script: CallScript;
+    currentNode: CallScriptNode | null;
+  }>("/api/call-scripts/start", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+/**
+ * Step a script run by selecting an optionId.
+ */
+export async function stepCallScriptRun(runId: string, optionId: string) {
+  return apiFetch<{
+    runId: string;
+    status: ScriptRunStatus;
+    currentNode: CallScriptNode | null;
+  }>(`/api/call-scripts/runs/${encodeURIComponent(runId)}/step`, {
+    method: "POST",
+    body: JSON.stringify({ optionId }),
+  });
+}
+
+/**
+ * End a script run explicitly (e.g., agent abandons or completes with outcome).
+ */
+export async function endCallScriptRun(params: {
+  runId: string;
+  outcome?: string;
+  status?: ScriptRunStatus;
+}) {
+  const { runId, outcome, status } = params;
+  return apiFetch<{ success: boolean }>(
+    `/api/call-scripts/runs/${encodeURIComponent(runId)}/end`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        outcome,
+        status,
+      }),
+    }
+  );
+}
+
+/**
+ * Get recent script runs for a lead.
+ */
+export async function getCallScriptRunsForLead(leadId: string) {
+  return apiFetch<{ runs: CallScriptRunSummary[] }>(
+    `/api/call-scripts/leads/${encodeURIComponent(leadId)}/runs`,
+    {
+      method: "GET",
+    }
+  );
+}
+
+// -----------------------------------------------------------------------------
+// LEAD IMPORT – NEW
+// -----------------------------------------------------------------------------
+
+export type LeadImportRow = {
+  name: string;
+  phone: string;
+  source: string;
+  email?: string | null;
+  state?: string | null;
+};
+
+export type LeadImportSummary = {
+  success: boolean;
+  totalRows: number;
+  validRows: number;
+  insertedCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  errors: {
+    rowIndex: number;
+    message: string;
+  }[];
+};
+
+/**
+ * Run a manual lead import (ADMIN/MANAGER only).
+ * Expects rows in the same RawImportedLeadRow shape used by the backend.
+ */
+export async function runManualLeadImport(
+  rows: LeadImportRow[],
+  label?: string
+): Promise<LeadImportSummary> {
+  return apiFetch<LeadImportSummary>("/api/lead-import/manual", {
+    method: "POST",
+    body: JSON.stringify({
+      rows,
+      label: label ?? undefined,
+    }),
+  });
+}
+
+// -----------------------------------------------------------------------------
+// DASHBOARD
+// -----------------------------------------------------------------------------
+
+// Keep this loose for now; you can tighten types later using the server schema.
+export type DashboardResponse = any;
+
+/**
+ * Get role-based dashboard data for the current user.
+ */
+export async function getDashboard(): Promise<DashboardResponse> {
+  return apiFetch<DashboardResponse>("/api/dashboard", {
+    method: "GET",
+  });
 }
 

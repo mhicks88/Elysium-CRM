@@ -1,11 +1,13 @@
+// apps/web/src/routes/leads/index.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { getLeads } from "../../lib/apiClient";
+import { Link, useNavigate } from "react-router-dom";
+import { AppShell } from "../../components/layout/AppShell";
+import { Card } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
+import { Badge } from "../../components/ui/Badge";
+import { Input } from "../../components/ui/Input";
+import { getLeads, updateLead } from "../../lib/apiClient";
 import { useAuth } from "../../lib/auth";
-
-// Local types for the leads list UI.
-// These mirror what the API returns but are defined here so we don't
-// depend on the shared-types package while things are stabilizing.
 
 type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
 
@@ -19,720 +21,663 @@ interface LeadListItem {
   status: LeadStatus;
   createdAt: string;
   updatedAt: string;
-  assignedToName: string | null;
+  // Optional compliance flags if backend provides them
+  permissionToContactPhone?: boolean;
+  doNotContact?: boolean;
+  // Optional assignment info if backend provides it
+  assignedToUserId?: string | null;
 }
 
-interface LeadListResponse {
-  items: LeadListItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-}
-
-const statusOptions: (LeadStatus | "ALL")[] = [
-  "ALL",
-  "NEW",
-  "IN_PROGRESS",
-  "ENROLLED",
-  "DO_NOT_CONTACT",
-];
-
-type SortField = "name" | "status" | "state" | "createdAt";
-type SortDirection = "asc" | "desc";
-
-const parsePage = (raw: string | null): number => {
-  if (!raw) return 1;
-  const parsed = parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed < 1) return 1;
-  return parsed;
+const statusLabel: Record<LeadStatus, string> = {
+  NEW: "New",
+  IN_PROGRESS: "In progress",
+  ENROLLED: "Enrolled",
+  DO_NOT_CONTACT: "Do Not Contact",
 };
 
-const parseStatus = (raw: string | null): LeadStatus | "ALL" => {
-  if (!raw || raw === "ALL") return "ALL";
-
-  const validStatuses: LeadStatus[] = [
-    "NEW",
-    "IN_PROGRESS",
-    "ENROLLED",
-    "DO_NOT_CONTACT",
-  ];
-
-  if (validStatuses.includes(raw as LeadStatus)) {
-    return raw as LeadStatus;
-  }
-
-  return "ALL";
-};
-
-const parseSortField = (raw: string | null): SortField => {
-  const valid: SortField[] = ["name", "status", "state", "createdAt"];
-  if (!raw || !valid.includes(raw as SortField)) {
-    return "createdAt";
-  }
-  return raw as SortField;
-};
-
-const parseSortDirection = (raw: string | null): SortDirection => {
-  if (raw === "asc" || raw === "desc") {
-    return raw;
-  }
-  return "desc";
-};
-
-// Status badge styling helper
-const getStatusBadgeStyle = (status: LeadStatus): React.CSSProperties => {
-  const base: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "0.15rem 0.5rem",
-    borderRadius: 9999,
-    fontSize: 12,
-    fontWeight: 500,
-    border: "1px solid transparent",
-  };
-
+function statusBadgeVariant(status: LeadStatus) {
   switch (status) {
-    case "NEW":
-      return {
-        ...base,
-        backgroundColor: "#dbeafe",
-        color: "#1d4ed8",
-        borderColor: "#93c5fd",
-      };
-    case "IN_PROGRESS":
-      return {
-        ...base,
-        backgroundColor: "#fef9c3",
-        color: "#854d0e",
-        borderColor: "#facc15",
-      };
     case "ENROLLED":
-      return {
-        ...base,
-        backgroundColor: "#dcfce7",
-        color: "#166534",
-        borderColor: "#86efac",
-      };
+      return "success" as const;
     case "DO_NOT_CONTACT":
-      return {
-        ...base,
-        backgroundColor: "#fee2e2",
-        color: "#991b1b",
-        borderColor: "#fecaca",
-      };
+      return "danger" as const;
+    case "IN_PROGRESS":
+      return "warning" as const;
+    case "NEW":
     default:
-      return base;
+      return "neutral" as const;
   }
-};
+}
 
-// Simple skeleton cell style
-const skeletonCellStyle: React.CSSProperties = {
-  height: 12,
-  borderRadius: 9999,
-  backgroundColor: "#e5e7eb",
-};
+/**
+ * Normalize whatever getLeads() returns into an array of leads.
+ */
+function normalizeLeadsResponse(raw: any): LeadListItem[] {
+  if (!raw) return [];
 
-const LeadsPage: React.FC = () => {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
+  if (Array.isArray(raw)) return raw as LeadListItem[];
+  if (Array.isArray(raw.items)) return raw.items as LeadListItem[];
+  if (Array.isArray(raw.leads)) return raw.leads as LeadListItem[];
+  if (Array.isArray(raw.data)) return raw.data as LeadListItem[];
+  if (Array.isArray(raw.results)) return raw.results as LeadListItem[];
 
-  const canEditLeads =
-    user && (user.role === "ADMIN" || user.role === "AGENT");
+  return [];
+}
 
-  // Initialize state from URL on first render
-  const [page, setPage] = useState<number>(() => parsePage(searchParams.get("page")));
-  const [pageSize] = useState<number>(25); // fixed for now
-  const [search, setSearch] = useState<string>(() => searchParams.get("search") ?? "");
-  const [status, setStatus] = useState<LeadStatus | "ALL">(() =>
-    parseStatus(searchParams.get("status"))
-  );
-  const [sortField, setSortField] = useState<SortField>(() =>
-    parseSortField(searchParams.get("sortField"))
-  );
-  const [sortDirection, setSortDirection] = useState<SortDirection>(() =>
-    parseSortDirection(searchParams.get("sortDir"))
-  );
+/**
+ * Derive contact compliance status for a lead, based on flags if present,
+ * otherwise fall back to status.
+ */
+function computeContactCompliance(lead: LeadListItem) {
+  const isDnc =
+    lead.doNotContact === true || lead.status === "DO_NOT_CONTACT";
+
+  const hasPermissionFlag =
+    typeof lead.permissionToContactPhone === "boolean";
+  const permPhone = lead.permissionToContactPhone;
+
+  if (isDnc) {
+    return {
+      label: "DNC",
+      description: "Do not contact by phone.",
+      variant: "danger" as const,
+    };
+  }
+
+  if (hasPermissionFlag && permPhone === false) {
+    return {
+      label: "No phone permission",
+      description: "Permission to contact by phone not on file.",
+      variant: "warning" as const,
+    };
+  }
+
+  return {
+    label: "OK to contact",
+    description: "Contact permitted by phone.",
+    variant: "success" as const,
+  };
+}
+
+const LeadsIndex: React.FC = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth() as { user: any | null };
+  const currentUserId = user?.id ?? null;
 
   const [leads, setLeads] = useState<LeadListItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const [search, setSearch] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<LeadStatus | "ALL">("ALL");
+  const [showMyLeadsOnly, setShowMyLeadsOnly] = useState<boolean>(false);
+  const [assigningId, setAssigningId] = useState<string | null>(null);
 
-  // Keep URL query params in sync with current state
   useEffect(() => {
-    const params: Record<string, string> = {};
+    let mounted = true;
 
-    if (page && page !== 1) {
-      params.page = String(page);
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const raw = await getLeads();
+        if (!mounted) return;
+
+        const normalized = normalizeLeadsResponse(raw);
+        setLeads(normalized);
+      } catch (err: any) {
+        if (!mounted) return;
+        setError(err?.message ?? "Failed to load leads");
+      } finally {
+        if (mounted) setLoading(false);
+      }
     }
 
-    const trimmedSearch = search.trim();
-    if (trimmedSearch) {
-      params.search = trimmedSearch;
+    void load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const filteredLeads = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return leads.filter((lead) => {
+      if (statusFilter !== "ALL" && lead.status !== statusFilter) {
+        return false;
+      }
+
+      if (showMyLeadsOnly && currentUserId) {
+        if (lead.assignedToUserId !== currentUserId) {
+          return false;
+        }
+      }
+
+      if (!term) return true;
+
+      const haystack = [
+        lead.firstName,
+        lead.lastName,
+        lead.email,
+        lead.phone,
+        lead.state,
+        lead.assignedToUserId,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(term);
+    });
+  }, [leads, search, statusFilter, showMyLeadsOnly, currentUserId]);
+
+  const counts = useMemo(() => {
+    const base: Record<LeadStatus | "total", number> = {
+      total: leads.length,
+      NEW: 0,
+      IN_PROGRESS: 0,
+      ENROLLED: 0,
+      DO_NOT_CONTACT: 0,
+    };
+
+    for (const lead of leads) {
+      base[lead.status] += 1;
     }
 
-    if (status && status !== "ALL") {
-      params.status = status;
-    }
+    return base;
+  }, [leads]);
 
-    // Persist sort if it differs from default (createdAt desc)
-    if (!(sortField === "createdAt" && sortDirection === "desc")) {
-      params.sortField = sortField;
-      params.sortDir = sortDirection;
-    }
+  const myLeadsCount =
+    currentUserId == null
+      ? 0
+      : leads.filter((l) => l.assignedToUserId === currentUserId).length;
 
-    setSearchParams(params, { replace: true });
-  }, [page, search, status, sortField, sortDirection, setSearchParams]);
-
-  const fetchLeads = async () => {
-    setLoading(true);
+  async function handleAssignToMe(lead: LeadListItem) {
+    if (!currentUserId) return;
+    setAssigningId(lead.id);
     setError(null);
     try {
-      const trimmedSearch = search.trim();
-      const statusFilter = status === "ALL" ? undefined : status;
-
-      const response: LeadListResponse = await getLeads({
-        page,
-        pageSize,
-        search: trimmedSearch || undefined,
-        status: statusFilter,
+      await updateLead(lead.id, {
+        assignedToUserId: currentUserId,
       });
-
-      setLeads(response.items);
-      setTotal(response.total);
+      setLeads((prev) =>
+        prev.map((l) =>
+          l.id === lead.id
+            ? {
+                ...l,
+                assignedToUserId: currentUserId,
+              }
+            : l
+        )
+      );
     } catch (err: any) {
-      const message =
-        err instanceof Error ? err.message : "Failed to load leads";
-      setError(message);
+      setError(
+        err?.message ?? "Failed to assign lead to current user"
+      );
     } finally {
-      setLoading(false);
+      setAssigningId(null);
     }
-  };
+  }
 
-  // Fetch whenever the "query state" changes (excluding sort, which is client-side)
-  useEffect(() => {
-    void fetchLeads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, search, status]);
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Ensure we reset to page 1 when user "confirms" the search.
-    setPage(1);
-    // No direct fetch here; useEffect will pick up the page change.
-  };
-
-  const goToPreviousPage = () => {
-    setPage((prev) => Math.max(1, prev - 1));
-  };
-
-  const goToNextPage = () => {
-    setPage((prev) => Math.min(totalPages, prev + 1));
-  };
-
-  const handleSort = (field: SortField) => {
-    setSortField((currentField) => {
-      if (currentField === field) {
-        // Toggle direction
-        setSortDirection((currentDir) => (currentDir === "asc" ? "desc" : "asc"));
-        return currentField;
-      }
-
-      // New field: default to ascending
-      setSortDirection("asc");
-      return field;
-    });
-  };
-
-  const sortedLeads = useMemo(() => {
-    const copy = [...leads];
-
-    copy.sort((a, b) => {
-      const directionMultiplier = sortDirection === "asc" ? 1 : -1;
-
-      const compareStrings = (x: string | null | undefined, y: string | null | undefined) => {
-        const sx = (x ?? "").toLowerCase();
-        const sy = (y ?? "").toLowerCase();
-        if (sx < sy) return -1;
-        if (sx > sy) return 1;
-        return 0;
-      };
-
-      switch (sortField) {
-        case "name": {
-          const lastNameCompare = compareStrings(a.lastName, b.lastName);
-          if (lastNameCompare !== 0) return lastNameCompare * directionMultiplier;
-          const firstNameCompare = compareStrings(a.firstName, b.firstName);
-          return firstNameCompare * directionMultiplier;
-        }
-        case "status": {
-          const cmp = compareStrings(a.status, b.status);
-          return cmp * directionMultiplier;
-        }
-        case "state": {
-          const cmp = compareStrings(a.state, b.state);
-          return cmp * directionMultiplier;
-        }
-        case "createdAt": {
-          const da = new Date(a.createdAt).getTime();
-          const db = new Date(b.createdAt).getTime();
-          if (da < db) return -1 * directionMultiplier;
-          if (da > db) return 1 * directionMultiplier;
-          return 0;
-        }
-        default:
-          return 0;
-      }
-    });
-
-    return copy;
-  }, [leads, sortField, sortDirection]);
-
-  const renderSortableHeader = (
-    label: string,
-    field: SortField,
-    align: "left" | "right" = "left"
-  ) => {
-    const isActive = sortField === field;
-    const arrow =
-      !isActive ? "" : sortDirection === "asc" ? " ▲" : " ▼";
-
-    return (
-      <th
+  return (
+    <AppShell>
+      <div
         style={{
-          textAlign: align,
-          borderBottom: "1px solid #e5e7eb",
-          padding: 8,
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-6)",
         }}
       >
-        <button
-          type="button"
-          onClick={() => handleSort(field)}
-          style={{
-            background: "none",
-            border: "none",
-            padding: 0,
-            margin: 0,
-            cursor: "pointer",
-            font: "inherit",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            color: isActive ? "#111827" : "#4b5563",
-          }}
-        >
-          <span>{label}</span>
-          {arrow && <span>{arrow}</span>}
-        </button>
-      </th>
-    );
-  };
-
-  // Compute result range for "Showing X–Y of Z"
-  const startIndex = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const endIndex =
-    total === 0
-      ? 0
-      : Math.min(startIndex + sortedLeads.length - 1, total);
-
-  // Render a simple skeleton table while loading
-  const renderSkeleton = () => {
-    const rows = Array.from({ length: 8 });
-    const cols = 7; // Name, Status, Email, Phone, State, Assigned, Created
-
-    return (
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          padding: "1rem",
-          borderRadius: 6,
-        }}
-      >
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            marginBottom: "1rem",
-          }}
-        >
-          <thead>
-            <tr>
-              {Array.from({ length: cols }).map((_, idx) => (
-                <th
-                  key={idx}
-                  style={{
-                    textAlign: "left",
-                    borderBottom: "1px solid #e5e7eb",
-                    padding: 8,
-                    fontSize: 12,
-                    color: "#9ca3af",
-                  }}
-                >
-                  {/* faint header blocks */}
-                  <div style={{ ...skeletonCellStyle, width: "40%" }} />
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((_, rowIdx) => (
-              <tr key={rowIdx}>
-                {Array.from({ length: cols }).map((__, colIdx) => (
-                  <td
-                    key={colIdx}
-                    style={{
-                      borderBottom: "1px solid #f3f4f6",
-                      padding: 8,
-                    }}
-                  >
-                    <div
-                      style={{
-                        ...skeletonCellStyle,
-                        width:
-                          colIdx === 0
-                            ? "60%"
-                            : colIdx === 2
-                            ? "80%"
-                            : "40%",
-                      }}
-                    />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {/* Page header */}
         <div
           style={{
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            color: "#9ca3af",
-            fontSize: 12,
+            flexDirection: "column",
+            gap: "0.5rem",
           }}
         >
-          <div>Loading leads…</div>
+          <h1
+            style={{
+              fontSize: "var(--text-2xl)",
+              fontWeight: 600,
+            }}
+          >
+            Leads
+          </h1>
+          <p
+            style={{
+              fontSize: "var(--text-sm)",
+              color: "var(--color-text-soft)",
+              maxWidth: "40rem",
+            }}
+          >
+            Your central queue of inbound and outbound leads. Use filters to
+            focus on what actually needs action, not the entire universe.
+          </p>
+        </div>
+
+        {/* Error message */}
+        {error && (
+          <Card title="Something went wrong">
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-danger)",
+              }}
+            >
+              {error}
+            </p>
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => window.location.reload()}
+              >
+                Reload page
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* Summary cards */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: "var(--space-4)",
+          }}
+        >
+          <Card title="Total leads">
+            <div
+              style={{
+                fontSize: "1.75rem",
+                fontWeight: 600,
+              }}
+            >
+              {counts.total}
+            </div>
+            <p
+              style={{
+                marginTop: "var(--space-2)",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              All leads in the system.
+            </p>
+          </Card>
+
+          <Card title="New">
+            <div
+              style={{
+                fontSize: "1.75rem",
+                fontWeight: 600,
+              }}
+            >
+              {counts.NEW}
+            </div>
+            <p
+              style={{
+                marginTop: "var(--space-2)",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              Leads that have not been touched yet.
+            </p>
+          </Card>
+
+          <Card title="In progress">
+            <div
+              style={{
+                fontSize: "1.75rem",
+                fontWeight: 600,
+              }}
+            >
+              {counts.IN_PROGRESS}
+            </div>
+            <p
+              style={{
+                marginTop: "var(--space-2)",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              Leads currently being worked by agents.
+            </p>
+          </Card>
+
+          <Card title="Enrolled">
+            <div
+              style={{
+                fontSize: "1.75rem",
+                fontWeight: 600,
+              }}
+            >
+              {counts.ENROLLED}
+            </div>
+            <p
+              style={{
+                marginTop: "var(--space-2)",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              Leads successfully converted into enrollments.
+            </p>
+          </Card>
+        </div>
+
+        {/* Filters + actions */}
+        <Card
+          title="Filters & actions"
+          description="Slice by status and search by name, email, phone, state, or assignee."
+          actions={
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                alignItems: "center",
+              }}
+            >
+              {currentUserId && (
+                <Button
+                  variant={showMyLeadsOnly ? "primary" : "secondary"}
+                  size="sm"
+                  onClick={() =>
+                    setShowMyLeadsOnly((prev) => !prev)
+                  }
+                >
+                  {showMyLeadsOnly
+                    ? `Showing my leads (${myLeadsCount})`
+                    : `My leads (${myLeadsCount})`}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => {
+                  navigate("/leads/new");
+                }}
+              >
+                + New lead
+              </Button>
+            </div>
+          }
+        >
           <div
             style={{
-              display: "flex",
-              gap: "0.5rem",
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1.2fr)",
+              gap: "var(--space-4)",
+              alignItems: "flex-end",
             }}
           >
-            <div style={{ ...skeletonCellStyle, width: 70 }} />
-            <div style={{ ...skeletonCellStyle, width: 70 }} />
-          </div>
-        </div>
-      </section>
-    );
-  };
-
-  return (
-    <div style={{ padding: "1.5rem" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "1rem",
-        }}
-      >
-        <h1>Elysium CRM – Leads</h1>
-        {canEditLeads && (
-          <Link
-            to="/leads/new"
-            style={{
-              padding: "0.5rem 1rem",
-              borderRadius: 4,
-              backgroundColor: "#2563eb",
-              color: "white",
-              textDecoration: "none",
-              fontSize: 14,
-            }}
-          >
-            Create Lead
-          </Link>
-        )}
-      </header>
-
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          padding: "1rem",
-          borderRadius: 6,
-          marginBottom: "1rem",
-        }}
-      >
-        <form
-          onSubmit={handleSearchSubmit}
-          style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}
-        >
-          <div style={{ flex: 1 }}>
-            <label
-              htmlFor="search"
-              style={{ display: "block", marginBottom: 4, fontSize: 14 }}
-            >
-              Search (name, email, phone)
-            </label>
-            <input
-              id="search"
-              type="text"
+            <Input
+              label="Search"
+              hint="Name, email, phone, state, or assignee userId"
+              placeholder="Start typing to filter…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 4,
-                border: "1px solid #ccc",
-              }}
             />
-          </div>
 
-          <div>
-            <label
-              htmlFor="status"
-              style={{ display: "block", marginBottom: 4, fontSize: 14 }}
-            >
-              Status
-            </label>
-            <select
-              id="status"
-              value={status}
-              onChange={(e) => {
-                const value = e.target.value as LeadStatus | "ALL";
-                setStatus(value);
-                setPage(1);
-              }}
+            <div
               style={{
-                padding: 8,
-                borderRadius: 4,
-                border: "1px solid #ccc",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.5rem",
               }}
             >
-              {statusOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option.replace(/_/g, " ")}
-                </option>
-              ))}
-            </select>
+              {(["ALL", "NEW", "IN_PROGRESS", "ENROLLED", "DO_NOT_CONTACT"] as const).map(
+                (statusKey) => {
+                  const isActive = statusFilter === statusKey;
+                  const label =
+                    statusKey === "ALL"
+                      ? "All"
+                      : statusLabel[statusKey as LeadStatus];
+
+                  return (
+                    <Button
+                      key={statusKey}
+                      variant={isActive ? "primary" : "secondary"}
+                      size="sm"
+                      onClick={() =>
+                        setStatusFilter(
+                          statusKey === "ALL"
+                            ? "ALL"
+                            : (statusKey as LeadStatus)
+                        )
+                      }
+                    >
+                      {label}
+                    </Button>
+                  );
+                }
+              )}
+            </div>
           </div>
+        </Card>
 
-          <div style={{ alignSelf: "flex-end" }}>
-            <button
-              type="submit"
-              style={{
-                padding: "0.6rem 1.25rem",
-                borderRadius: 4,
-                border: "none",
-                backgroundColor: "#2563eb",
-                color: "white",
-                cursor: "pointer",
-              }}
-            >
-              Search
-            </button>
-          </div>
-        </form>
-      </section>
-
-      {error && (
-        <div style={{ padding: "1rem", color: "red" }}>{error}</div>
-      )}
-
-      {!error && loading && renderSkeleton()}
-
-      {!loading && !error && (
-        <section
-          style={{
-            border: "1px solid #e5e7eb",
-            padding: "1rem",
-            borderRadius: 6,
-          }}
+        {/* Leads table */}
+        <Card
+          title="Lead queue"
+          description={
+            filteredLeads.length === 0
+              ? "No leads match your current filters."
+              : `Showing ${filteredLeads.length} of ${leads.length} leads.`
+          }
         >
-          {sortedLeads.length === 0 ? (
-            <p>No leads found.</p>
+          {loading && leads.length === 0 ? (
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              Loading leads…
+            </p>
+          ) : filteredLeads.length === 0 ? (
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              No leads found. Try broadening your filters.
+            </p>
           ) : (
-            <>
+            <div
+              style={{
+                overflowX: "auto",
+              }}
+            >
               <table
                 style={{
                   width: "100%",
                   borderCollapse: "collapse",
-                  marginBottom: "1rem",
+                  fontSize: "var(--text-sm)",
                 }}
               >
                 <thead>
-                  <tr>
-                    {renderSortableHeader("Name", "name")}
-                    {renderSortableHeader("Status", "status")}
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #e5e7eb",
-                        padding: 8,
-                      }}
-                    >
-                      Email
-                    </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #e5e7eb",
-                        padding: 8,
-                      }}
-                    >
-                      Phone
-                    </th>
-                    {renderSortableHeader("State", "state")}
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #e5e7eb",
-                        padding: 8,
-                      }}
-                    >
-                      Assigned to
-                    </th>
-                    {renderSortableHeader("Created", "createdAt")}
+                  <tr
+                    style={{
+                      textAlign: "left",
+                      color: "var(--color-text-soft)",
+                      fontSize: "var(--text-xs)",
+                      borderBottom:
+                        "1px solid var(--color-border-subtle)",
+                    }}
+                  >
+                    <th style={{ padding: "0.5rem" }}>Lead</th>
+                    <th style={{ padding: "0.5rem" }}>Contact</th>
+                    <th style={{ padding: "0.5rem" }}>Assignee</th>
+                    <th style={{ padding: "0.5rem" }}>Location</th>
+                    <th style={{ padding: "0.5rem" }}>Status</th>
+                    <th style={{ padding: "0.5rem" }}>Contact status</th>
+                    <th style={{ padding: "0.5rem" }}>Created</th>
+                    <th style={{ padding: "0.5rem" }} />
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedLeads.map((lead) => (
-                    <tr key={lead.id}>
-                      <td
+                  {filteredLeads.map((lead) => {
+                    const contactStatus = computeContactCompliance(lead);
+                    const canAssignToMe =
+                      !!currentUserId &&
+                      lead.assignedToUserId !== currentUserId;
+
+                    return (
+                      <tr
+                        key={lead.id}
                         style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
+                          borderBottom:
+                            "1px solid rgba(15,23,42,0.6)",
                         }}
                       >
-                        <Link
-                          to={`/leads/${lead.id}`}
-                          style={{ color: "#2563eb", textDecoration: "none" }}
+                        <td style={{ padding: "0.5rem" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "0.1rem",
+                            }}
+                          >
+                            <span>
+                              {lead.firstName} {lead.lastName}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: "var(--text-xs)",
+                                color: "var(--color-text-soft)",
+                              }}
+                            >
+                              #{lead.id}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ padding: "0.5rem" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "0.1rem",
+                            }}
+                          >
+                            {lead.email && <span>{lead.email}</span>}
+                            {lead.phone && (
+                              <span
+                                style={{
+                                  fontSize: "var(--text-xs)",
+                                  color: "var(--color-text-soft)",
+                                }}
+                              >
+                                {lead.phone}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: "0.5rem" }}>
+                          {lead.assignedToUserId ? (
+                            <span
+                              style={{
+                                fontSize: "var(--text-xs)",
+                                color: "var(--color-text-soft)",
+                              }}
+                            >
+                              {lead.assignedToUserId}
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: "var(--text-xs)",
+                                color: "var(--color-text-soft)",
+                                fontStyle: "italic",
+                              }}
+                            >
+                              Unassigned
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: "0.5rem" }}>
+                          {lead.state ? (
+                            lead.state
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: "var(--text-xs)",
+                                color: "var(--color-text-soft)",
+                              }}
+                            >
+                              Unknown
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: "0.5rem" }}>
+                          <Badge variant={statusBadgeVariant(lead.status)}>
+                            {statusLabel[lead.status]}
+                          </Badge>
+                        </td>
+                        <td style={{ padding: "0.5rem" }}>
+                          <Badge variant={contactStatus.variant}>
+                            {contactStatus.label}
+                          </Badge>
+                        </td>
+                        <td style={{ padding: "0.5rem" }}>
+                          <span
+                            style={{
+                              fontSize: "var(--text-xs)",
+                              color: "var(--color-text-soft)",
+                            }}
+                          >
+                            {new Date(
+                              lead.createdAt
+                            ).toLocaleDateString()}
+                          </span>
+                        </td>
+                        <td
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
                         >
-                          {lead.firstName} {lead.lastName}
-                        </Link>
-                      </td>
-                      <td
-                        style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
-                        }}
-                      >
-                        <span style={getStatusBadgeStyle(lead.status)}>
-                          {lead.status.replace(/_/g, " ")}
-                        </span>
-                      </td>
-                      <td
-                        style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
-                        }}
-                      >
-                        {lead.email ?? "—"}
-                      </td>
-                      <td
-                        style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
-                        }}
-                      >
-                        {lead.phone ?? "—"}
-                      </td>
-                      <td
-                        style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
-                        }}
-                      >
-                        {lead.state ?? "—"}
-                      </td>
-                      <td
-                        style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
-                        }}
-                      >
-                        {lead.assignedToName ?? "Unassigned"}
-                      </td>
-                      <td
-                        style={{
-                          borderBottom: "1px solid #f3f4f6",
-                          padding: 8,
-                        }}
-                      >
-                        {new Date(lead.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "0.25rem",
+                              justifyContent: "flex-end",
+                            }}
+                          >
+                            {canAssignToMe && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                disabled={
+                                  assigningId === lead.id
+                                }
+                                onClick={() =>
+                                  void handleAssignToMe(lead)
+                                }
+                              >
+                                {assigningId === lead.id
+                                  ? "Assigning…"
+                                  : "Assign to me"}
+                              </Button>
+                            )}
+                            <Link to={`/leads/${lead.id}`}>
+                              <Button variant="ghost" size="sm">
+                                View
+                              </Button>
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div>
-                  {total > 0 ? (
-                    <>
-                      <div>
-                        Showing {startIndex}–{endIndex} of {total} results
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#6b7280",
-                          marginTop: 2,
-                        }}
-                      >
-                        Page {page} of {totalPages}
-                      </div>
-                    </>
-                  ) : (
-                    <div>No results</div>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <button
-                    type="button"
-                    onClick={goToPreviousPage}
-                    disabled={page <= 1}
-                    style={{
-                      padding: "0.4rem 0.75rem",
-                      borderRadius: 4,
-                      border: "1px solid #ccc",
-                      backgroundColor: page <= 1 ? "#f3f4f6" : "white",
-                      cursor: page <= 1 ? "default" : "pointer",
-                    }}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    onClick={goToNextPage}
-                    disabled={page >= totalPages}
-                    style={{
-                      padding: "0.4rem 0.75rem",
-                      borderRadius: 4,
-                      border: "1px solid #ccc",
-                      backgroundColor: page >= totalPages ? "#f3f4f6" : "white",
-                      cursor: page >= totalPages ? "default" : "pointer",
-                    }}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            </>
+            </div>
           )}
-        </section>
-      )}
-    </div>
+        </Card>
+      </div>
+    </AppShell>
   );
 };
 
-export default LeadsPage;
-
+export default LeadsIndex;

@@ -1,16 +1,25 @@
+// apps/web/src/routes/admin/Admin.tsx
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import {
+  apiFetch,
   getComplianceSummary,
   getComplianceStatsByAgent,
-  getRecentComplianceFailures,
+  runManualLeadImport,
+  type LeadImportSummary,
 } from "../../lib/apiClient";
+import { AppShell } from "../../components/layout/AppShell";
+import { Card } from "../../components/ui/Card";
+import { Badge } from "../../components/ui/Badge";
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
 
 type Role =
   | "ADMIN"
   | "AGENT"
   | "VIEW_ONLY"
   | "MANAGER"
+  | "DIRECTOR"
   | "COMPLIANCE_OFFICER";
 
 interface RequireRoleProps {
@@ -21,9 +30,6 @@ interface RequireRoleProps {
 export function RequireRole({ roles, children }: RequireRoleProps) {
   const { user } = useAuth() as { user: any | null };
 
-  // If we truly have no user in context, just show a message,
-  // don't hard-redirect to /login. This avoids the redirect loop
-  // you're seeing while keeping the page protected.
   if (!user) {
     return (
       <div style={{ padding: "2rem" }}>
@@ -60,472 +66,867 @@ interface SummaryState {
   lastCheckAt: string | null;
 }
 
-export default function Admin() {
+interface AgentStat {
+  userId: string;
+  total: number;
+  pass: number;
+  fail: number;
+}
+
+interface FailureRow {
+  id: string;
+  leadId: string;
+  userId: string;
+  purpose: string;
+  status: "PASS" | "FAIL";
+  result: any;
+  createdAt: string;
+}
+
+const Admin: React.FC = () => {
   const [summary, setSummary] = useState<SummaryState | null>(null);
-  const [agentStats, setAgentStats] = useState<
-    { userId: string; total: number; pass: number; fail: number }[]
-  >([]);
-  const [failures, setFailures] = useState<
-    {
-      id: string;
-      leadId: string;
-      userId: string;
-      purpose: string;
-      status: "PASS" | "FAIL";
-      result: any;
-      createdAt: string;
-    }[]
-  >([]);
+  const [agentStats, setAgentStats] = useState<AgentStat[]>([]);
+  const [failures, setFailures] = useState<FailureRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [agentFilter, setAgentFilter] = useState<string>("");
+
+  // Date filters
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
+
+  // Lead import state
+  const [importText, setImportText] = useState<string>(
+    '[\n  { "name": "Jane Doe", "phone": "555-111-2222", "source": "WEB" }\n]'
+  );
+  const [importLabel, setImportLabel] = useState<string>("");
+  const [importLoading, setImportLoading] = useState<boolean>(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<LeadImportSummary | null>(
+    null
+  );
+
+  async function loadData() {
+    setLoading(true);
+    setError(null);
+    try {
+      const params =
+        fromDate || toDate
+          ? {
+              from: fromDate || undefined,
+              to: toDate || undefined,
+            }
+          : undefined;
+
+      const [summaryRes, agentRes, failuresRes] = await Promise.all([
+        getComplianceSummary(params),
+        getComplianceStatsByAgent(params),
+        fetchRecentFailuresWithFilters(20, params),
+      ]);
+
+      setSummary(summaryRes);
+      setAgentStats(agentRes.agents || []);
+      setFailures(failuresRes.failures || []);
+    } catch (err: any) {
+      setError(
+        err?.message || "Failed to load compliance dashboard data"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
 
-    async function load() {
-      setLoading(true);
-      setError(null);
+    (async () => {
       try {
-        const [summaryRes, agentRes, failuresRes] = await Promise.all([
-          getComplianceSummary(),
-          getComplianceStatsByAgent(),
-          getRecentComplianceFailures(20),
-        ]);
-
-        if (!mounted) return;
-
-        setSummary(summaryRes);
-        setAgentStats(agentRes.agents || []);
-        setFailures(failuresRes.failures || []);
-      } catch (err: any) {
-        if (!mounted) return;
-        setError(
-          err?.message || "Failed to load compliance dashboard data"
-        );
-      } finally {
-        if (mounted) setLoading(false);
+        await loadData();
+      } catch {
+        // error already handled in loadData
       }
-    }
+      if (!mounted) return;
+    })();
 
-    void load();
     return () => {
       mounted = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
-    <RequireRole roles={["ADMIN"]}>
-      <div style={{ padding: "2rem", maxWidth: 1200, margin: "0 auto" }}>
-        <h1 style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>
-          Compliance Dashboard
-        </h1>
-        <p style={{ color: "#6b7280", marginBottom: "1.5rem" }}>
-          Overview of pre-call compliance checks across the organization.
-        </p>
+  const filteredAgents = agentStats.filter((agent) => {
+    if (!agentFilter.trim()) return true;
+    const term = agentFilter.toLowerCase();
+    return agent.userId.toLowerCase().includes(term);
+  });
 
-        {error && (
+  const failureRatePercent = summary ? summary.failRate * 100 : 0;
+  const failureRateBadgeVariant =
+    failureRatePercent >= 15
+      ? "danger"
+      : failureRatePercent >= 5
+      ? "warning"
+      : "success";
+
+  async function handleRunImport(e: React.FormEvent) {
+    e.preventDefault();
+    setImportLoading(true);
+    setImportError(null);
+    setImportResult(null);
+
+    try {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(importText);
+      } catch (err: any) {
+        throw new Error(
+          "Import payload must be valid JSON. Expected an array of rows."
+        );
+      }
+
+      if (!Array.isArray(parsed)) {
+        throw new Error("Import payload must be a JSON array of rows.");
+      }
+
+      const result = await runManualLeadImport(
+        parsed,
+        importLabel || undefined
+      );
+      setImportResult(result);
+    } catch (err: any) {
+      setImportError(err?.message ?? "Failed to run lead import");
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
+  return (
+    <RequireRole
+      roles={["ADMIN", "MANAGER", "DIRECTOR", "COMPLIANCE_OFFICER"]}
+    >
+      <AppShell>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-6)",
+          }}
+        >
+          {/* Page header */}
           <div
             style={{
-              marginBottom: "1rem",
-              padding: "0.75rem 1rem",
-              borderRadius: 8,
-              backgroundColor: "#fee2e2",
-              color: "#b91c1c",
-              fontSize: 14,
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
             }}
           >
-            {error}
+            <h1
+              style={{
+                fontSize: "var(--text-2xl)",
+                fontWeight: 600,
+              }}
+            >
+              Compliance & Admin Dashboard
+            </h1>
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+                maxWidth: "40rem",
+              }}
+            >
+              Overview of pre-call compliance checks and operational tools like
+              lead imports. Monitor failure rates by purpose and agent so you can
+              fix issues before a regulator makes you.
+            </p>
           </div>
-        )}
 
-        {loading && !summary && <p>Loading dashboard...</p>}
-
-        {summary && (
-          <>
-            {/* Summary cards */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                gap: "1rem",
-                marginBottom: "1.5rem",
-              }}
-            >
-              <SummaryCard
-                label="Total checks"
-                value={summary.totalChecks}
-              />
-              <SummaryCard
-                label="Passes"
-                value={summary.passCount}
-              />
-              <SummaryCard
-                label="Failures"
-                value={summary.failCount}
-              />
-              <SummaryCard
-                label="Failure rate"
-                value={
-                  summary.failRate > 0
-                    ? `${(summary.failRate * 100).toFixed(1)}%`
-                    : "0%"
-                }
-              />
-            </div>
-
-            {/* Purpose breakdown */}
-            <section
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 8,
-                padding: "1rem",
-                marginBottom: "1.5rem",
-                backgroundColor: "#ffffff",
-              }}
-            >
-              <h2 style={{ fontSize: "1.1rem", marginBottom: "0.75rem" }}>
-                Checks by purpose
-              </h2>
-              {Object.keys(summary.purposes).length === 0 ? (
-                <p style={{ fontStyle: "italic" }}>
-                  No compliance checks recorded yet.
-                </p>
-              ) : (
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: 14,
+          {/* Filters + Lead Import row */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1.2fr)",
+              gap: "var(--space-4)",
+              alignItems: "flex-start",
+            }}
+          >
+            {/* Filters */}
+            <Card
+              title="Filters"
+              description="Narrow the time window and slice agent performance."
+              actions={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  isLoading={loading}
+                  onClick={() => {
+                    void loadData();
                   }}
                 >
-                  <thead>
-                    <tr>
-                      <th
+                  Apply filters
+                </Button>
+              }
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(3, minmax(0, 1fr))",
+                  gap: "var(--space-4)",
+                }}
+              >
+                <Input
+                  label="From date"
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                />
+                <Input
+                  label="To date"
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                />
+                <Input
+                  label="Filter agents"
+                  hint="Search by userId"
+                  value={agentFilter}
+                  onChange={(e) => setAgentFilter(e.target.value)}
+                />
+              </div>
+              {error && (
+                <div
+                  style={{
+                    marginTop: "var(--space-3)",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--color-danger)",
+                  }}
+                >
+                  {error}
+                </div>
+              )}
+            </Card>
+
+            {/* Lead import */}
+            <Card
+              title="Lead import (JSON v1)"
+              description="Paste an array of lead rows to bulk-import. This is a developer-friendly v1; later we can add CSV/XLSX upload."
+              actions={
+                <Button
+                  size="sm"
+                  isLoading={importLoading}
+                  disabled={importLoading}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const form = document.getElementById(
+                      "lead-import-form"
+                    ) as HTMLFormElement | null;
+                    if (form) form.requestSubmit();
+                  }}
+                >
+                  Run import
+                </Button>
+              }
+            >
+              <form
+                id="lead-import-form"
+                onSubmit={handleRunImport}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "var(--space-3)",
+                }}
+              >
+                <Input
+                  label="Import label (optional)"
+                  placeholder="e.g. Web form batch 2025-12-02"
+                  value={importLabel}
+                  onChange={(e) => setImportLabel(e.target.value)}
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.25rem",
+                  }}
+                >
+                  <label
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      color: "var(--color-text-soft)",
+                    }}
+                  >
+                    JSON rows
+                  </label>
+                  <textarea
+                    value={importText}
+                    onChange={(e) => setImportText(e.target.value)}
+                    style={{
+                      width: "100%",
+                      minHeight: "180px",
+                      fontFamily: "monospace",
+                      fontSize: "0.8rem",
+                      borderRadius: "var(--radius-md)",
+                      border:
+                        "1px solid var(--color-border-subtle)",
+                      backgroundColor: "var(--color-bg-subtle)",
+                      color: "var(--color-text-primary)",
+                      padding: "var(--space-2)",
+                      resize: "vertical",
+                    }}
+                    placeholder={`[\n  { "name": "Jane Doe", "phone": "555-111-2222", "source": "WEB", "email": "jane@example.com", "state": "CA" }\n]`}
+                  />
+                  <div
+                    style={{
+                      fontSize: "var(--text-xs)",
+                      color: "var(--color-text-soft)",
+                    }}
+                  >
+                    Expected shape:{" "}
+                    <code>
+                      {"{ name, phone, source, email?, state? }"}
+                    </code>{" "}
+                    • Required: name, phone, source.
+                  </div>
+                </div>
+
+                {importError && (
+                  <div
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      color: "var(--color-danger)",
+                    }}
+                  >
+                    {importError}
+                  </div>
+                )}
+
+                {importResult && (
+                  <div
+                    style={{
+                      fontSize: "var(--text-xs)",
+                      color: "var(--color-text-soft)",
+                      marginTop: "var(--space-2)",
+                    }}
+                  >
+                    <div>
+                      Total rows:{" "}
+                      <strong>{importResult.totalRows}</strong>
+                    </div>
+                    <div>
+                      Valid rows:{" "}
+                      <strong>{importResult.validRows}</strong>
+                    </div>
+                    <div>
+                      Inserted:{" "}
+                      <strong>
+                        {importResult.insertedCount}
+                      </strong>
+                    </div>
+                    <div>
+                      Duplicates skipped:{" "}
+                      <strong>
+                        {importResult.duplicateCount}
+                      </strong>
+                    </div>
+                    <div>
+                      Errors:{" "}
+                      <strong>{importResult.errorCount}</strong>
+                    </div>
+                    {importResult.errors.length > 0 && (
+                      <details
+                        style={{
+                          marginTop: "0.25rem",
+                        }}
+                      >
+                        <summary>View row errors</summary>
+                        <ul
+                          style={{
+                            listStyle: "none",
+                            padding: 0,
+                            marginTop: "0.25rem",
+                          }}
+                        >
+                          {importResult.errors.map((err, idx) => (
+                            <li key={idx}>
+                              Row {err.rowIndex}: {err.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </form>
+            </Card>
+          </div>
+
+          {/* Summary grid */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: "var(--space-4)",
+            }}
+          >
+            <Card title="Total checks">
+              <div
+                style={{
+                  fontSize: "1.75rem",
+                  fontWeight: 600,
+                }}
+              >
+                {summary?.totalChecks ?? (loading ? "…" : "0")}
+              </div>
+              <p
+                style={{
+                  marginTop: "var(--space-2)",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--color-text-soft)",
+                }}
+              >
+                All pre-call compliance checks in the selected window.
+              </p>
+            </Card>
+
+            <Card title="Passes">
+              <div
+                style={{
+                  fontSize: "1.75rem",
+                  fontWeight: 600,
+                  color: "var(--color-success)",
+                }}
+              >
+                {summary?.passCount ?? (loading ? "…" : "0")}
+              </div>
+              <p
+                style={{
+                  marginTop: "var(--space-2)",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--color-text-soft)",
+                }}
+              >
+                Calls successfully cleared under your rules engine.
+              </p>
+            </Card>
+
+            <Card title="Failures">
+              <div
+                style={{
+                  fontSize: "1.75rem",
+                  fontWeight: 600,
+                  color: "var(--color-danger)",
+                }}
+              >
+                {summary?.failCount ?? (loading ? "…" : "0")}
+              </div>
+              <p
+                style={{
+                  marginTop: "var(--space-2)",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--color-text-soft)",
+                }}
+              >
+                Calls blocked due to DNC, timing, or rule violations.
+              </p>
+            </Card>
+
+            <Card title="Failure rate">
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "1.75rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {summary
+                    ? `${failureRatePercent.toFixed(1)}%`
+                    : loading
+                    ? "…"
+                    : "0.0%"}
+                </span>
+                <Badge variant={failureRateBadgeVariant}>
+                  {failureRateBadgeVariant === "danger"
+                    ? "High risk"
+                    : failureRateBadgeVariant === "warning"
+                    ? "Monitor"
+                    : "Healthy"}
+                </Badge>
+              </div>
+              <p
+                style={{
+                  marginTop: "var(--space-2)",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--color-text-soft)",
+                }}
+              >
+                Failed checks divided by total in the selected window.
+              </p>
+            </Card>
+          </div>
+
+          {/* Middle row: purposes + agents */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)",
+              gap: "var(--space-4)",
+              alignItems: "flex-start",
+            }}
+          >
+            {/* Checks by purpose */}
+            <Card
+              title="Checks by purpose"
+              description="Which call purposes are driving the most compliance activity?"
+            >
+              {(!summary || Object.keys(summary.purposes).length === 0) &&
+              !loading ? (
+                <p
+                  style={{
+                    fontStyle: "italic",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--color-text-soft)",
+                  }}
+                >
+                  No compliance checks recorded in this window.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    overflowX: "auto",
+                  }}
+                >
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: "var(--text-sm)",
+                    }}
+                  >
+                    <thead>
+                      <tr
                         style={{
                           textAlign: "left",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
+                          color: "var(--color-text-soft)",
+                          fontSize: "var(--text-xs)",
+                          borderBottom:
+                            "1px solid var(--color-border-subtle)",
                         }}
                       >
-                        Purpose
-                      </th>
-                      <th
+                        <th style={{ padding: "0.5rem" }}>Purpose</th>
+                        <th
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
+                        >
+                          Total
+                        </th>
+                        <th
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
+                        >
+                          Pass
+                        </th>
+                        <th
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
+                        >
+                          Fail
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary &&
+                        Object.entries(summary.purposes).map(
+                          ([purpose, stats]) => (
+                            <tr
+                              key={purpose}
+                              style={{
+                                borderBottom:
+                                  "1px solid rgba(15,23,42,0.6)",
+                              }}
+                            >
+                              <td style={{ padding: "0.5rem" }}>
+                                {purpose}
+                              </td>
+                              <td
+                                style={{
+                                  padding: "0.5rem",
+                                  textAlign: "right",
+                                }}
+                              >
+                                {stats.total}
+                              </td>
+                              <td
+                                style={{
+                                  padding: "0.5rem",
+                                  textAlign: "right",
+                                  color: "var(--color-success)",
+                                }}
+                              >
+                                {stats.pass}
+                              </td>
+                              <td
+                                style={{
+                                  padding: "0.5rem",
+                                  textAlign: "right",
+                                  color: "var(--color-danger)",
+                                }}
+                              >
+                                {stats.fail}
+                              </td>
+                            </tr>
+                          )
+                        )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+
+            {/* Checks by agent */}
+            <Card
+              title="Checks by agent"
+              description="Per-agent compliance load and performance."
+            >
+              {filteredAgents.length === 0 && !loading ? (
+                <p
+                  style={{
+                    fontStyle: "italic",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--color-text-soft)",
+                  }}
+                >
+                  No agent compliance activity matches this filter/window.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    overflowX: "auto",
+                  }}
+                >
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: "var(--text-sm)",
+                    }}
+                  >
+                    <thead>
+                      <tr
                         style={{
-                          textAlign: "right",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
+                          textAlign: "left",
+                          color: "var(--color-text-soft)",
+                          fontSize: "var(--text-xs)",
+                          borderBottom:
+                            "1px solid var(--color-border-subtle)",
                         }}
                       >
-                        Total
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Pass
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Fail
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(summary.purposes).map(
-                      ([purpose, stats]) => (
-                        <tr key={purpose}>
-                          <td
-                            style={{
-                              padding: "0.5rem",
-                              borderBottom: "1px solid #f3f4f6",
-                            }}
-                          >
-                            {purpose}
+                        <th style={{ padding: "0.5rem" }}>Agent (userId)</th>
+                        <th
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
+                        >
+                          Total
+                        </th>
+                        <th
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
+                        >
+                          Pass
+                        </th>
+                        <th
+                          style={{
+                            padding: "0.5rem",
+                            textAlign: "right",
+                          }}
+                        >
+                          Fail
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredAgents.map((agent) => (
+                        <tr
+                          key={agent.userId}
+                          style={{
+                            borderBottom:
+                              "1px solid rgba(15,23,42,0.6)",
+                          }}
+                        >
+                          <td style={{ padding: "0.5rem" }}>
+                            {agent.userId}
                           </td>
                           <td
                             style={{
                               padding: "0.5rem",
                               textAlign: "right",
-                              borderBottom: "1px solid #f3f4f6",
                             }}
                           >
-                            {stats.total}
+                            {agent.total}
                           </td>
                           <td
                             style={{
                               padding: "0.5rem",
                               textAlign: "right",
-                              borderBottom: "1px solid #f3f4f6",
+                              color: "var(--color-success)",
                             }}
                           >
-                            {stats.pass}
+                            {agent.pass}
                           </td>
                           <td
                             style={{
                               padding: "0.5rem",
                               textAlign: "right",
-                              borderBottom: "1px solid #f3f4f6",
+                              color: "var(--color-danger)",
                             }}
                           >
-                            {stats.fail}
+                            {agent.fail}
                           </td>
                         </tr>
-                      )
-                    )}
-                  </tbody>
-                </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </section>
+            </Card>
+          </div>
 
-            {/* Agent breakdown */}
-            <section
+          {/* Recent failures */}
+          <Card
+            title="Recent failed checks"
+            description="The most recent pre-call checks that failed your rules. This is your daily investigation feed."
+          >
+            {failures.length === 0 && !loading ? (
+              <p
+                style={{
+                  fontStyle: "italic",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--color-text-soft)",
+                }}
+              >
+                No failed compliance checks recorded in this window.
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "var(--space-3)",
+                  maxHeight: "420px",
+                  overflowY: "auto",
+                }}
+              >
+                {failures.map((f) => (
+                  <div
+                    key={f.id}
+                    style={{
+                      padding: "var(--space-3)",
+                      borderRadius: "var(--radius-md)",
+                      border:
+                        "1px solid var(--color-border-subtle)",
+                      backgroundColor: "rgba(15,23,42,0.7)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.25rem",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontSize: "var(--text-sm)",
+                            fontWeight: 500,
+                          }}
+                        >
+                          Lead {f.leadId}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "var(--text-xs)",
+                            color: "var(--color-text-soft)",
+                          }}
+                        >
+                          Agent: {f.userId} • Purpose: {f.purpose}
+                        </div>
+                      </div>
+                      <Badge variant="danger">FAIL</Badge>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "var(--text-xs)",
+                        color: "var(--color-text-soft)",
+                        marginTop: "0.25rem",
+                      }}
+                    >
+                      {new Date(f.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {loading && (
+            <p
               style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 8,
-                padding: "1rem",
-                marginBottom: "1.5rem",
-                backgroundColor: "#ffffff",
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
               }}
             >
-              <h2 style={{ fontSize: "1.1rem", marginBottom: "0.75rem" }}>
-                Checks by agent
-              </h2>
-              {agentStats.length === 0 ? (
-                <p style={{ fontStyle: "italic" }}>
-                  No agent compliance activity yet.
-                </p>
-              ) : (
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: 14,
-                  }}
-                >
-                  <thead>
-                    <tr>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Agent (userId)
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Total
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Pass
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Fail
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {agentStats.map((agent) => (
-                      <tr key={agent.userId}>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {agent.userId}
-                        </td>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            textAlign: "right",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {agent.total}
-                        </td>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            textAlign: "right",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {agent.pass}
-                        </td>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            textAlign: "right",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {agent.fail}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-
-            {/* Recent failures */}
-            <section
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 8,
-                padding: "1rem",
-                marginBottom: "1.5rem",
-                backgroundColor: "#ffffff",
-              }}
-            >
-              <h2 style={{ fontSize: "1.1rem", marginBottom: "0.75rem" }}>
-                Recent failed checks
-              </h2>
-              {failures.length === 0 ? (
-                <p style={{ fontStyle: "italic" }}>
-                  No failed compliance checks recorded.
-                </p>
-              ) : (
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: 13,
-                  }}
-                >
-                  <thead>
-                    <tr>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Time
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Lead ID
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Agent
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "0.5rem",
-                          borderBottom: "1px solid #e5e7eb",
-                        }}
-                      >
-                        Purpose
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {failures.map((f) => (
-                      <tr key={f.id}>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {new Date(f.createdAt).toLocaleString()}
-                        </td>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {f.leadId}
-                        </td>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {f.userId}
-                        </td>
-                        <td
-                          style={{
-                            padding: "0.5rem",
-                            borderBottom: "1px solid #f3f4f6",
-                          }}
-                        >
-                          {f.purpose}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-          </>
-        )}
-      </div>
+              Loading dashboard…
+            </p>
+          )}
+        </div>
+      </AppShell>
     </RequireRole>
-  );
-}
-
-const SummaryCard: React.FC<{ label: string; value: number | string }> = ({
-  label,
-  value,
-}) => {
-  return (
-    <div
-      style={{
-        padding: "1rem",
-        borderRadius: 8,
-        border: "1px solid #e5e7eb",
-        backgroundColor: "#ffffff",
-      }}
-    >
-      <div style={{ color: "#6b7280", fontSize: 13, marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: "1.4rem", fontWeight: 600 }}>{value}</div>
-    </div>
   );
 };
 
+export default Admin;
+
+/**
+ * Helper to fetch recent failures with optional from/to filters.
+ * We use apiFetch directly so we can attach query params.
+ */
+async function fetchRecentFailuresWithFilters(
+  limit: number,
+  params?: { from?: string; to?: string }
+): Promise<{ failures: FailureRow[] }> {
+  const search = new URLSearchParams();
+  search.set("limit", String(limit));
+  if (params?.from) search.set("from", params.from);
+  if (params?.to) search.set("to", params.to);
+
+  const qs = search.toString();
+  const url = qs
+    ? `/api/compliance/admin/recent-failures?${qs}`
+    : `/api/compliance/admin/recent-failures`;
+
+  return apiFetch<{ failures: FailureRow[] }>(url, {
+    method: "GET",
+  });
+}
