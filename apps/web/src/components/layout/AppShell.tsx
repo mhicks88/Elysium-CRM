@@ -2,10 +2,20 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "../ui/Button";
+import { useAuth } from "../../lib/auth";
 
 export interface AppShellProps {
   children: React.ReactNode;
 }
+
+type Role =
+  | "ADMIN"
+  | "AGENT"
+  | "VIEW_ONLY"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "COMPLIANCE"
+  | "READ_ONLY";
 
 /**
  * AppShell
@@ -15,14 +25,30 @@ export interface AppShellProps {
  */
 export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const location = useLocation();
+  const { user } = useAuth() as { user: any | null };
+  const userRole = (user?.role ?? null) as Role | null;
+  const userEmail = user?.email ?? "user@example.com";
 
-  const navItems: Array<{
-    label: string;
-    path: string;
-  }> = [
+  const isAdminLike =
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "DIRECTOR" ||
+    userRole === "COMPLIANCE";
+
+  const baseNav: Array<{ label: string; path: string }> = [
+    { label: "Dashboard", path: "/dashboard" },
     { label: "Leads", path: "/leads" },
-    { label: "Admin", path: "/admin" },
+    { label: "Tasks", path: "/tasks" },
   ];
+
+  const adminExtras: Array<{ label: string; path: string }> = isAdminLike
+    ? [
+        { label: "Coaching", path: "/calls/coaching" },
+        { label: "Admin", path: "/admin" },
+      ]
+    : [];
+
+  const navItems = [...baseNav, ...adminExtras];
 
   return (
     <div
@@ -44,7 +70,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         }}
       >
         <Link
-          to="/leads"
+          to="/dashboard"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -97,7 +123,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           }}
         >
           {navItems.map((item) => {
-            const isActive = location.pathname.startsWith(item.path);
+            const isActive =
+              location.pathname === item.path ||
+              location.pathname.startsWith(item.path + "/");
+
             return (
               <Link
                 key={item.path}
@@ -202,7 +231,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            {/* Placeholder for future theme toggle / notifications */}
+            {/* Placeholder for future global activity view */}
             <Button variant="ghost" size="sm">
               Activity
             </Button>
@@ -230,9 +259,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                   fontSize: "0.8rem",
                   fontWeight: 600,
                   color: "#ecfdf5",
+                  textTransform: "uppercase",
                 }}
               >
-                A
+                {userEmail.charAt(0) || "U"}
               </div>
               <div
                 style={{
@@ -247,7 +277,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     fontWeight: 500,
                   }}
                 >
-                  Admin
+                  {userEmail}
                 </span>
                 <span
                   style={{
@@ -255,7 +285,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     color: "var(--color-text-soft)",
                   }}
                 >
-                  Elysium Org
+                  {userRole ?? "User"}
                 </span>
               </div>
             </div>

@@ -5,8 +5,10 @@ import {
   apiFetch,
   getComplianceSummary,
   getComplianceStatsByAgent,
-  runManualLeadImport,
-  type LeadImportSummary,
+  uploadLeadImportCsv,
+  getRecentLeadImports,
+  type LeadCsvImportSummary,
+  type LeadImportJobSummary,
 } from "../../lib/apiClient";
 import { AppShell } from "../../components/layout/AppShell";
 import { Card } from "../../components/ui/Card";
@@ -96,20 +98,25 @@ const Admin: React.FC = () => {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
 
-  // Lead import state
-  const [importText, setImportText] = useState<string>(
-    '[\n  { "name": "Jane Doe", "phone": "555-111-2222", "source": "WEB" }\n]'
-  );
-  const [importLabel, setImportLabel] = useState<string>("");
+  // Lead import (CSV) state
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importSource, setImportSource] = useState<string>("");
   const [importLoading, setImportLoading] = useState<boolean>(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<LeadImportSummary | null>(
-    null
-  );
+  const [importResult, setImportResult] =
+    useState<LeadCsvImportSummary | null>(null);
+
+  // Recent import jobs
+  const [recentImports, setRecentImports] = useState<
+    LeadImportJobSummary[]
+  >([]);
+  const [recentImportsError, setRecentImportsError] =
+    useState<string | null>(null);
 
   async function loadData() {
     setLoading(true);
     setError(null);
+    setRecentImportsError(null);
     try {
       const params =
         fromDate || toDate
@@ -119,19 +126,23 @@ const Admin: React.FC = () => {
             }
           : undefined;
 
-      const [summaryRes, agentRes, failuresRes] = await Promise.all([
-        getComplianceSummary(params),
-        getComplianceStatsByAgent(params),
-        fetchRecentFailuresWithFilters(20, params),
-      ]);
+      const [summaryRes, agentRes, failuresRes, importsRes] =
+        await Promise.all([
+          getComplianceSummary(params),
+          getComplianceStatsByAgent(params),
+          fetchRecentFailuresWithFilters(20, params),
+          getRecentLeadImports(10),
+        ]);
 
       setSummary(summaryRes);
       setAgentStats(agentRes.agents || []);
       setFailures(failuresRes.failures || []);
+      setRecentImports(importsRes.jobs || []);
     } catch (err: any) {
-      setError(
-        err?.message || "Failed to load compliance dashboard data"
-      );
+      // Split the blame: if it's compliance endpoints, show main error;
+      // if it's only imports, show imports error but don't break the page.
+      const msg = err?.message || "Failed to load admin dashboard data";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -176,24 +187,25 @@ const Admin: React.FC = () => {
     setImportResult(null);
 
     try {
-      let parsed: any;
+      if (!importFile) {
+        throw new Error("Please choose a CSV file to import.");
+      }
+
+      const result = await uploadLeadImportCsv(importFile, {
+        source: importSource || undefined,
+      });
+
+      setImportResult(result);
+
+      // After a successful import, refresh the recent imports list
       try {
-        parsed = JSON.parse(importText);
+        const importsRes = await getRecentLeadImports(10);
+        setRecentImports(importsRes.jobs || []);
       } catch (err: any) {
-        throw new Error(
-          "Import payload must be valid JSON. Expected an array of rows."
+        setRecentImportsError(
+          err?.message || "Imported, but failed to refresh recent imports"
         );
       }
-
-      if (!Array.isArray(parsed)) {
-        throw new Error("Import payload must be a JSON array of rows.");
-      }
-
-      const result = await runManualLeadImport(
-        parsed,
-        importLabel || undefined
-      );
-      setImportResult(result);
     } catch (err: any) {
       setImportError(err?.message ?? "Failed to run lead import");
     } finally {
@@ -308,10 +320,10 @@ const Admin: React.FC = () => {
               )}
             </Card>
 
-            {/* Lead import */}
+            {/* Lead import (CSV) */}
             <Card
-              title="Lead import (JSON v1)"
-              description="Paste an array of lead rows to bulk-import. This is a developer-friendly v1; later we can add CSV/XLSX upload."
+              title="Lead import (CSV)"
+              description="Upload a CSV file of leads. Required columns: firstName, lastName, phone. Optional: email, state, source."
               actions={
                 <Button
                   size="sm"
@@ -339,16 +351,17 @@ const Admin: React.FC = () => {
                 }}
               >
                 <Input
-                  label="Import label (optional)"
-                  placeholder="e.g. Web form batch 2025-12-02"
-                  value={importLabel}
-                  onChange={(e) => setImportLabel(e.target.value)}
+                  label="Import source label (optional)"
+                  placeholder="e.g. Dialer vendor 2025-12-03"
+                  value={importSource}
+                  onChange={(e) => setImportSource(e.target.value)}
                 />
+
                 <div
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: "0.25rem",
+                    gap: "0.4rem",
                   }}
                 >
                   <label
@@ -357,25 +370,23 @@ const Admin: React.FC = () => {
                       color: "var(--color-text-soft)",
                     }}
                   >
-                    JSON rows
+                    CSV file
                   </label>
-                  <textarea
-                    value={importText}
-                    onChange={(e) => setImportText(e.target.value)}
-                    style={{
-                      width: "100%",
-                      minHeight: "180px",
-                      fontFamily: "monospace",
-                      fontSize: "0.8rem",
-                      borderRadius: "var(--radius-md)",
-                      border:
-                        "1px solid var(--color-border-subtle)",
-                      backgroundColor: "var(--color-bg-subtle)",
-                      color: "var(--color-text-primary)",
-                      padding: "var(--space-2)",
-                      resize: "vertical",
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(e) => {
+                      const file =
+                        e.target.files && e.target.files[0]
+                          ? e.target.files[0]
+                          : null;
+                      setImportFile(file);
+                      setImportResult(null);
+                      setImportError(null);
                     }}
-                    placeholder={`[\n  { "name": "Jane Doe", "phone": "555-111-2222", "source": "WEB", "email": "jane@example.com", "state": "CA" }\n]`}
+                    style={{
+                      fontSize: "var(--text-xs)",
+                    }}
                   />
                   <div
                     style={{
@@ -383,11 +394,11 @@ const Admin: React.FC = () => {
                       color: "var(--color-text-soft)",
                     }}
                   >
-                    Expected shape:{" "}
+                    Expected headers (case-insensitive):{" "}
                     <code>
-                      {"{ name, phone, source, email?, state? }"}
-                    </code>{" "}
-                    • Required: name, phone, source.
+                      firstName, lastName, phone, email?, state?, source?
+                    </code>
+                    . Duplicates are detected by primary phone.
                   </div>
                 </div>
 
@@ -411,17 +422,29 @@ const Admin: React.FC = () => {
                     }}
                   >
                     <div>
+                      Import job:{" "}
+                      <code>{importResult.jobId}</code>
+                    </div>
+                    <div>
+                      File:{" "}
+                      <strong>
+                        {importResult.filename ?? "(unknown)"}
+                      </strong>
+                    </div>
+                    <div>
+                      Source label:{" "}
+                      <strong>
+                        {importResult.source ?? "(none)"}
+                      </strong>
+                    </div>
+                    <div>
                       Total rows:{" "}
                       <strong>{importResult.totalRows}</strong>
                     </div>
                     <div>
-                      Valid rows:{" "}
-                      <strong>{importResult.validRows}</strong>
-                    </div>
-                    <div>
-                      Inserted:{" "}
+                      Created leads:{" "}
                       <strong>
-                        {importResult.insertedCount}
+                        {importResult.createdCount}
                       </strong>
                     </div>
                     <div>
@@ -431,31 +454,9 @@ const Admin: React.FC = () => {
                       </strong>
                     </div>
                     <div>
-                      Errors:{" "}
-                      <strong>{importResult.errorCount}</strong>
+                      Failed rows:{" "}
+                      <strong>{importResult.failedCount}</strong>
                     </div>
-                    {importResult.errors.length > 0 && (
-                      <details
-                        style={{
-                          marginTop: "0.25rem",
-                        }}
-                      >
-                        <summary>View row errors</summary>
-                        <ul
-                          style={{
-                            listStyle: "none",
-                            padding: 0,
-                            marginTop: "0.25rem",
-                          }}
-                        >
-                          {importResult.errors.map((err, idx) => (
-                            <li key={idx}>
-                              Row {err.rowIndex}: {err.message}
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
                   </div>
                 )}
               </form>
@@ -734,7 +735,9 @@ const Admin: React.FC = () => {
                             "1px solid var(--color-border-subtle)",
                         }}
                       >
-                        <th style={{ padding: "0.5rem" }}>Agent (userId)</th>
+                        <th style={{ padding: "0.5rem" }}>
+                          Agent (userId)
+                        </th>
                         <th
                           style={{
                             padding: "0.5rem",
@@ -808,87 +811,247 @@ const Admin: React.FC = () => {
             </Card>
           </div>
 
-          {/* Recent failures */}
-          <Card
-            title="Recent failed checks"
-            description="The most recent pre-call checks that failed your rules. This is your daily investigation feed."
+          {/* Bottom row: recent imports + recent failures */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1.2fr)",
+              gap: "var(--space-4)",
+              alignItems: "flex-start",
+            }}
           >
-            {failures.length === 0 && !loading ? (
-              <p
-                style={{
-                  fontStyle: "italic",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--color-text-soft)",
-                }}
-              >
-                No failed compliance checks recorded in this window.
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-3)",
-                  maxHeight: "420px",
-                  overflowY: "auto",
-                }}
-              >
-                {failures.map((f) => (
-                  <div
-                    key={f.id}
-                    style={{
-                      padding: "var(--space-3)",
-                      borderRadius: "var(--radius-md)",
-                      border:
-                        "1px solid var(--color-border-subtle)",
-                      backgroundColor: "rgba(15,23,42,0.7)",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "0.25rem",
-                    }}
-                  >
+            {/* Recent lead imports */}
+            <Card
+              title="Recent lead imports"
+              description="Latest bulk lead imports into the system."
+            >
+              {recentImportsError && (
+                <div
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    color: "var(--color-danger)",
+                    marginBottom: "var(--space-2)",
+                  }}
+                >
+                  {recentImportsError}
+                </div>
+              )}
+
+              {recentImports.length === 0 && !recentImportsError ? (
+                <p
+                  style={{
+                    fontStyle: "italic",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--color-text-soft)",
+                  }}
+                >
+                  No import jobs found yet. Upload a CSV to see imports here.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "var(--space-2)",
+                    maxHeight: "420px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {recentImports.map((job) => (
                     <div
+                      key={job.id}
                       style={{
+                        padding: "var(--space-3)",
+                        borderRadius: "var(--radius-md)",
+                        border:
+                          "1px solid var(--color-border-subtle)",
+                        backgroundColor: "rgba(15,23,42,0.7)",
                         display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: "0.5rem",
+                        flexDirection: "column",
+                        gap: "0.25rem",
                       }}
                     >
-                      <div>
-                        <div
-                          style={{
-                            fontSize: "var(--text-sm)",
-                            fontWeight: 500,
-                          }}
-                        >
-                          Lead {f.leadId}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <div>
+                          <div
+                            style={{
+                              fontSize: "var(--text-sm)",
+                              fontWeight: 500,
+                            }}
+                          >
+                            {job.filename ?? "(Unnamed file)"}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "var(--text-xs)",
+                              color: "var(--color-text-soft)",
+                            }}
+                          >
+                            Source:{" "}
+                            {job.source ?? "(no label)"} •{" "}
+                            {job.createdBy
+                              ? `By ${job.createdBy.name} (${job.createdBy.email})`
+                              : "Unknown user"}
+                          </div>
                         </div>
-                        <div
-                          style={{
-                            fontSize: "var(--text-xs)",
-                            color: "var(--color-text-soft)",
-                          }}
+                        <Badge
+                          variant={
+                            job.status === "FAILED"
+                              ? "danger"
+                              : job.status === "RUNNING" ||
+                                job.status === "PENDING"
+                              ? "warning"
+                              : "success"
+                          }
                         >
-                          Agent: {f.userId} • Purpose: {f.purpose}
-                        </div>
+                          {job.status.toLowerCase()}
+                        </Badge>
                       </div>
-                      <Badge variant="danger">FAIL</Badge>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "0.75rem",
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-soft)",
+                          marginTop: "0.25rem",
+                        }}
+                      >
+                        <span>
+                          Total:{" "}
+                          <strong>{job.totalRows}</strong>
+                        </span>
+                        <span>
+                          Created:{" "}
+                          <strong>{job.createdCount}</strong>
+                        </span>
+                        <span>
+                          Duplicates:{" "}
+                          <strong>
+                            {job.duplicateCount}
+                          </strong>
+                        </span>
+                        <span>
+                          Failed:{" "}
+                          <strong>{job.failedCount}</strong>
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-soft)",
+                          marginTop: "0.25rem",
+                        }}
+                      >
+                        Started:{" "}
+                        {job.startedAt
+                          ? new Date(job.startedAt).toLocaleString()
+                          : new Date(job.createdAt).toLocaleString()}
+                        {job.finishedAt && (
+                          <>
+                            {" "}
+                            • Finished:{" "}
+                            {new Date(
+                              job.finishedAt
+                            ).toLocaleString()}
+                          </>
+                        )}
+                      </div>
                     </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* Recent failures */}
+            <Card
+              title="Recent failed checks"
+              description="The most recent pre-call checks that failed your rules. This is your daily investigation feed."
+            >
+              {failures.length === 0 && !loading ? (
+                <p
+                  style={{
+                    fontStyle: "italic",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--color-text-soft)",
+                  }}
+                >
+                  No failed compliance checks recorded in this window.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "var(--space-3)",
+                    maxHeight: "420px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {failures.map((f) => (
                     <div
+                      key={f.id}
                       style={{
-                        fontSize: "var(--text-xs)",
-                        color: "var(--color-text-soft)",
-                        marginTop: "0.25rem",
+                        padding: "var(--space-3)",
+                        borderRadius: "var(--radius-md)",
+                        border:
+                          "1px solid var(--color-border-subtle)",
+                        backgroundColor: "rgba(15,23,42,0.7)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.25rem",
                       }}
                     >
-                      {new Date(f.createdAt).toLocaleString()}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <div>
+                          <div
+                            style={{
+                              fontSize: "var(--text-sm)",
+                              fontWeight: 500,
+                            }}
+                          >
+                            Lead {f.leadId}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "var(--text-xs)",
+                              color: "var(--color-text-soft)",
+                            }}
+                          >
+                            Agent: {f.userId} • Purpose: {f.purpose}
+                          </div>
+                        </div>
+                        <Badge variant="danger">FAIL</Badge>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-soft)",
+                          marginTop: "0.25rem",
+                        }}
+                      >
+                        {new Date(f.createdAt).toLocaleString()}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
 
           {loading && (
             <p
@@ -930,3 +1093,4 @@ async function fetchRecentFailuresWithFilters(
     method: "GET",
   });
 }
+

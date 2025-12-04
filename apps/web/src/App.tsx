@@ -13,8 +13,12 @@ import LoginPage from "./routes/auth";
 import LeadsIndex from "./routes/leads";
 import LeadDetailPage from "./routes/leads/LeadDetail";
 import NewLeadPage from "./routes/leads/NewLead";
+import LeadImportPage from "./routes/leads/LeadImport";
 import AdminPage from "./routes/admin/Admin";
 import DashboardPage from "./routes/dashboard/Dashboard";
+import CallDetailPage from "./routes/calls/CallDetail";
+import CoachingQueuePage from "./routes/calls/CoachingQueue";
+import TasksPage from "./routes/tasks/TasksPage";
 
 // Simple guard: requires any authenticated user
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -22,7 +26,6 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   const location = useLocation();
 
   if (!isAuthenticated || !user) {
-    // Remember where we came from so login can send us back
     return (
       <Navigate
         to="/login"
@@ -74,12 +77,52 @@ function AppRoutes() {
         }
       />
 
+      {/* Lead import */}
+      <Route
+        path="/leads/import"
+        element={
+          <RequireAuth>
+            <LeadImportPage />
+          </RequireAuth>
+        }
+      />
+
       {/* Lead detail */}
       <Route
         path="/leads/:id"
         element={
           <RequireAuth>
             <LeadDetailPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Call detail (single call session) */}
+      <Route
+        path="/calls/:id"
+        element={
+          <RequireAuth>
+            <CallDetailPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Coaching review queue */}
+      <Route
+        path="/calls/coaching"
+        element={
+          <RequireAuth>
+            <CoachingQueuePage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Global tasks queue */}
+      <Route
+        path="/tasks"
+        element={
+          <RequireAuth>
+            <TasksPage />
           </RequireAuth>
         }
       />

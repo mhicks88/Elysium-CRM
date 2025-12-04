@@ -158,6 +158,21 @@ enum EnrollmentVerificationOutcome {
   PENDING
 }
 
+// Lead import enums
+
+enum LeadImportStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum LeadImportRowStatus {
+  CREATED
+  DUPLICATE
+  FAILED
+}
+
 model Organization {
   id                   String                @id @default(cuid())
   name                 String
@@ -180,6 +195,9 @@ model Organization {
   // Interactive call scripts + runs
   callScripts          CallScript[]
   callScriptRuns       CallScriptRun[]
+
+  // Lead imports
+  leadImportJobs       LeadImportJob[]
 }
 
 model User {
@@ -208,7 +226,7 @@ model User {
   enrollmentJourneysUpdated    EnrollmentJourney[]           @relation("EnrollmentJourneyUpdater")
   complianceChecks             ComplianceCheck[]             @relation("ComplianceCheckUser")
 
-  // NEW: interactive call script runs by this agent
+  // Interactive call script runs by this agent
   callScriptRuns CallScriptRun[] @relation("CallScriptAgent")
 
   // Manager → Agents hierarchy (self relation)
@@ -220,6 +238,9 @@ model User {
   directorId String?
   director   User?   @relation("DirectorTeam", fields: [directorId], references: [id])
   managers   User[]  @relation("DirectorTeam")
+
+  // Lead imports created by this user
+  leadImportJobs LeadImportJob[]
 }
 
 model Lead {
@@ -261,6 +282,9 @@ model Lead {
   complianceChecks         ComplianceCheck[]
   // Interactive call script runs for this lead
   callScriptRuns           CallScriptRun[]
+
+  // Lead imports that created this lead
+  leadImportRows           LeadImportRow[] @relation("LeadImportCreatedLead")
 }
 
 model LeadContactPreferenceChange {
@@ -525,13 +549,64 @@ model ComplianceCheck {
   leadId         String
   userId         String
   purpose        String
-  status         String // "PASS" | "FAIL" (and optionally SKIPPED)
+  status         String
   result         Json
   createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
   lead         Lead         @relation(fields: [leadId], references: [id])
   user         User         @relation("ComplianceCheckUser", fields: [userId], references: [id])
+}
+
+//
+// Lead Import Jobs & Rows
+//
+
+model LeadImportJob {
+  id              String           @id @default(cuid())
+  organizationId  String
+  createdByUserId String
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdByUser  User         @relation(fields: [createdByUserId], references: [id])
+  rows           LeadImportRow[]
+
+  source         String?
+  filename       String?
+
+  status         LeadImportStatus @default(PENDING)
+
+  totalRows      Int              @default(0)
+  createdCount   Int              @default(0)
+  duplicateCount Int              @default(0)
+  failedCount    Int              @default(0)
+
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model LeadImportRow {
+  id            String             @id @default(cuid())
+  jobId         String
+
+  job           LeadImportJob      @relation(fields: [jobId], references: [id])
+
+  rowNumber     Int
+  rawData       Json
+
+  status        LeadImportRowStatus
+  errorMessage  String?
+
+  createdLeadId String?
+  createdLead   Lead?              @relation("LeadImportCreatedLead", fields: [createdLeadId], references: [id])
+
+  createdAt     DateTime           @default(now())
+
+  @@index([jobId])
+  @@index([status])
 }
 
 //
@@ -542,7 +617,7 @@ model CallScript {
   id             String   @id @default(cuid())
   organizationId String
   name           String
-  purpose        String // e.g. "INITIAL_OUTREACH", "FOLLOW_UP", etc.
+  purpose        String
   description    String?
   isActive       Boolean  @default(true)
   entryNodeId    String?
@@ -591,7 +666,7 @@ model CallScriptRun {
   scriptId       String
   leadId         String
   agentId        String
-  status         String // "IN_PROGRESS" | "COMPLETED" | "ABANDONED"
+  status         String
   outcome        String?
   startedAt      DateTime  @default(now())
   endedAt        DateTime?
@@ -623,3 +698,4 @@ model CallScriptRunStep {
   @@index([nodeId])
   @@index([optionId])
 }
+

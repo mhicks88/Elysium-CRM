@@ -1,16 +1,29 @@
 // apps/web/src/components/ui/Button.tsx
 import React from "react";
-import { colors, radii, spacing, typography, shadows, transitions } from "../../design/tokens";
+import {
+  colors,
+  radii,
+  spacing,
+  typography,
+  shadows,
+  transitions,
+} from "../../design/tokens";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 type ButtonSize = "sm" | "md" | "lg";
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
   fullWidth?: boolean;
   leftIcon?: React.ReactNode;
   rightIcon?: React.ReactNode;
+  /**
+   * Optional loading state. When true, the button is disabled and styled as such,
+   * but the prop is not passed down to the DOM element (to avoid React warnings).
+   */
+  isLoading?: boolean;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -22,10 +35,13 @@ export const Button: React.FC<ButtonProps> = ({
   children,
   style,
   disabled,
+  isLoading,
   ...rest
 }) => {
-  const basePaddingY = size === "sm" ? spacing.xs : size === "lg" ? spacing.lg : spacing.sm;
-  const basePaddingX = size === "sm" ? spacing.sm : size === "lg" ? spacing.xl : spacing.lg;
+  const basePaddingY =
+    size === "sm" ? spacing.xs : size === "lg" ? spacing.lg : spacing.sm;
+  const basePaddingX =
+    size === "sm" ? spacing.sm : size === "lg" ? spacing.xl : spacing.lg;
   const fontSize =
     size === "sm"
       ? typography.fontSize.sm
@@ -61,13 +77,14 @@ export const Button: React.FC<ButtonProps> = ({
       break;
   }
 
-  const opacity = disabled ? 0.5 : 1;
-  const cursor = disabled ? "not-allowed" : "pointer";
+  const effectiveDisabled = disabled || isLoading;
+  const opacity = effectiveDisabled ? 0.5 : 1;
+  const cursor = effectiveDisabled ? "not-allowed" : "pointer";
 
   return (
     <button
       {...rest}
-      disabled={disabled}
+      disabled={effectiveDisabled}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -93,17 +110,25 @@ export const Button: React.FC<ButtonProps> = ({
         ...style,
       }}
       onMouseDown={(e) => {
-        if (!disabled && rest.onMouseDown) rest.onMouseDown(e);
+        if (!effectiveDisabled && rest.onMouseDown) rest.onMouseDown(e);
       }}
-      onClick={rest.onClick}
+      onClick={effectiveDisabled ? undefined : rest.onClick}
       onMouseEnter={rest.onMouseEnter}
       onMouseLeave={rest.onMouseLeave}
       onFocus={rest.onFocus}
       onBlur={rest.onBlur}
     >
-      {leftIcon && <span style={{ display: "inline-flex", alignItems: "center" }}>{leftIcon}</span>}
+      {leftIcon && (
+        <span style={{ display: "inline-flex", alignItems: "center" }}>
+          {leftIcon}
+        </span>
+      )}
       <span>{children}</span>
-      {rightIcon && <span style={{ display: "inline-flex", alignItems: "center" }}>{rightIcon}</span>}
+      {rightIcon && (
+        <span style={{ display: "inline-flex", alignItems: "center" }}>
+          {rightIcon}
+        </span>
+      )}
     </button>
   );
 };

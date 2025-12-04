@@ -1,4 +1,7 @@
 import { Router, Response, Request } from "express";
+import bcrypt from "bcryptjs";
+import { PrismaClient, UserRole } from "@prisma/client";
+
 import {
   signAccessToken,
   createSessionForUser,
@@ -7,21 +10,8 @@ import {
   type User,
 } from "./service";
 
+const prisma = new PrismaClient();
 export const authRouter = Router();
-
-// In-memory dev users.
-// TODO: replace with real DB lookup.
-type UserWithPassword = User & { password: string };
-
-const DEV_USERS: UserWithPassword[] = [
-  {
-    id: "admin-1",
-    email: "admin@example.com",
-    role: "ADMIN",
-    organizationId: "demo-org",
-    password: "Password123!",
-  },
-];
 
 // Utility: set refresh cookie
 function setRefreshCookie(res: Response, token: string) {
@@ -33,24 +23,66 @@ function setRefreshCookie(res: Response, token: string) {
   });
 }
 
+// Map DB enum roles → auth/frontend roles
+function mapDbRoleToAuthRole(dbRole: UserRole): User["role"] {
+  switch (dbRole) {
+    case UserRole.COMPLIANCE:
+      return "COMPLIANCE_OFFICER";
+    case UserRole.READ_ONLY:
+      return "VIEW_ONLY";
+    default:
+      // ADMIN, MANAGER, DIRECTOR, AGENT map 1:1
+      return dbRole as User["role"];
+  }
+}
+
 async function authenticateUser(
   email: string,
   password: string
 ): Promise<User | null> {
-  const found = DEV_USERS.find(
-    (u) => u.email === email && u.password === password
-  );
-  if (!found) return null;
+  const dbUser = await prisma.user.findUnique({
+    where: { email },
+  });
 
-  // Strip password before returning
-  const { password: _pw, ...user } = found;
+  if (!dbUser || !dbUser.isActive) {
+    return null;
+  }
+
+  const passwordOk = await bcrypt.compare(password, dbUser.passwordHash);
+  if (!passwordOk) {
+    return null;
+  }
+
+  const role = mapDbRoleToAuthRole(dbUser.role);
+
+  const user: User = {
+    id: dbUser.id,
+    email: dbUser.email,
+    role,
+    organizationId: dbUser.organizationId,
+  };
+
   return user;
 }
 
-function findUserById(userId: string): User | null {
-  const found = DEV_USERS.find((u) => u.id === userId);
-  if (!found) return null;
-  const { password: _pw, ...user } = found;
+async function findUserById(userId: string): Promise<User | null> {
+  const dbUser = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!dbUser || !dbUser.isActive) {
+    return null;
+  }
+
+  const role = mapDbRoleToAuthRole(dbUser.role);
+
+  const user: User = {
+    id: dbUser.id,
+    email: dbUser.email,
+    role,
+    organizationId: dbUser.organizationId,
+  };
+
   return user;
 }
 
@@ -101,7 +133,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
     return res.status(401).json({ error: "Unable to rotate session" });
   }
 
-  const user = findUserById(newSession.userId);
+  const user = await findUserById(newSession.userId);
   if (!user) {
     return res.status(401).json({ error: "User not found" });
   }

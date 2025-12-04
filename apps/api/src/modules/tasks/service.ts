@@ -74,6 +74,62 @@ export async function listTasksForLead(leadId: string): Promise<Task[]> {
 }
 
 /**
+ * List tasks for a set of assignees (or entire org if assigneeIds is null).
+ * Used for global "My/Team Tasks" views.
+ */
+export async function listTasksForAssignees(params: {
+  organizationId: string;
+  assigneeIds: string[] | null;
+  status?: ApiTaskStatus | "ALL";
+  limit?: number;
+  overdueOnly?: boolean;
+}): Promise<Task[]> {
+  const {
+    organizationId,
+    assigneeIds,
+    status,
+    limit = 50,
+    overdueOnly = false,
+  } = params;
+
+  const where: any = {
+    organizationId,
+  };
+
+  if (assigneeIds) {
+    where.assignedToUserId = { in: assigneeIds };
+  }
+
+  if (status && status !== "ALL") {
+    const dbStatus = mapApiStatusToDb(status);
+    where.status = dbStatus;
+  }
+
+  if (overdueOnly) {
+    const now = new Date();
+    where.dueAt = {
+      not: null,
+      lte: now,
+    };
+    // Also exclude DONE/CANCELLED when showing overdue
+    where.status = {
+      in: ["OPEN", "IN_PROGRESS"],
+    };
+  }
+
+  const rows = await prisma.task.findMany({
+    where,
+    orderBy: [
+      { dueAt: "asc" },
+      { createdAt: "desc" },
+    ],
+    take: limit,
+  });
+
+  return rows.map(mapDbTaskToApi);
+}
+
+/**
  * Create a new task for a lead.
  *
  * We derive:

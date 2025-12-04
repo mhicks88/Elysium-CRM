@@ -40,6 +40,11 @@ export interface AuditEvent {
  *
  * Later, you can add overloads/helpers for non-lead entities
  * (tasks, enrollments, etc.) if needed.
+ *
+ * IMPORTANT: This is best-effort. If the audit write fails
+ * (e.g. foreign key issues with actorUserId), we log the error
+ * and return a synthetic event instead of throwing, so we
+ * never break the main request flow.
  */
 export async function recordAuditEvent(params: {
   userId: string | null;
@@ -69,27 +74,56 @@ export async function recordAuditEvent(params: {
     throw new Error(`Lead not found for audit event (leadId=${leadId})`);
   }
 
-  const created = await prisma.auditEvent.create({
-    data: {
+  try {
+    const created = await prisma.auditEvent.create({
+      data: {
+        organizationId: lead.organizationId,
+        entityType: "LEAD",
+        entityId: lead.id,
+        eventType,
+        actorUserId: userId,
+        metadata: eventData as any,
+      },
+    });
+
+    return {
+      id: created.id,
+      organizationId: created.organizationId,
+      entityType: created.entityType,
+      entityId: created.entityId,
+      eventType: created.eventType,
+      actorUserId: created.actorUserId,
+      metadata: (created.metadata ?? {}) as Record<string, unknown>,
+      createdAt: created.createdAt,
+    };
+  } catch (err: any) {
+    // Best-effort audit: don't crash main request if logging fails
+    console.error(
+      "[audit] Failed to record audit event",
+      {
+        eventType,
+        leadId: lead.id,
+        organizationId: lead.organizationId,
+        userId,
+      },
+      err
+    );
+
+    // Return a synthetic "failed" audit event so callers don't blow up
+    return {
+      id: "FAILED_AUDIT_WRITE",
       organizationId: lead.organizationId,
       entityType: "LEAD",
       entityId: lead.id,
       eventType,
       actorUserId: userId,
-      metadata: eventData as any,
-    },
-  });
-
-  return {
-    id: created.id,
-    organizationId: created.organizationId,
-    entityType: created.entityType,
-    entityId: created.entityId,
-    eventType: created.eventType,
-    actorUserId: created.actorUserId,
-    metadata: (created.metadata ?? {}) as Record<string, unknown>,
-    createdAt: created.createdAt,
-  };
+      metadata: {
+        ...eventData,
+        _auditError: "Failed to persist audit event",
+      },
+      createdAt: new Date(),
+    };
+  }
 }
 
 /**

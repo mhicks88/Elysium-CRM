@@ -44,6 +44,20 @@ export interface AgentDashboardData {
         startedAt: string;
       }[];
     };
+    recentCalls: {
+      items: {
+        id: string;
+        leadId: string;
+        direction: string;
+        purpose: string;
+        status: string;
+        startedAt: string;
+      }[];
+    };
+    coachingSummary: {
+      coachedCallCount: number;
+      avgScore: number | null; // 0–100 or null if no scores
+    };
   };
 }
 
@@ -78,6 +92,34 @@ interface ManagerAdminDashboardCards {
       errorCount: number;
       label: string | null;
       source: string | null;
+    }[];
+  };
+  recentCalls: {
+    items: {
+      id: string;
+      leadId: string;
+      agentId: string;
+      direction: string;
+      purpose: string;
+      status: string;
+      startedAt: string;
+    }[];
+  };
+  callVolumeByAgent: {
+    items: {
+      agentId: string;
+      callCount: number;
+    }[];
+  };
+  coachingSummary: {
+    coachedCallCount: number;
+    avgScore: number | null;
+  };
+  coachingByAgent: {
+    items: {
+      agentId: string;
+      coachedCallCount: number;
+      avgScore: number | null;
     }[];
   };
 }
@@ -186,6 +228,97 @@ export async function getAgentDashboard(params: {
     startedAt: r.startedAt.toISOString(),
   }));
 
+  // Recent calls by this agent
+  const recentCallsRaw = await prisma.callSession.findMany({
+    where: {
+      organizationId,
+      agentId: userId,
+    },
+    orderBy: {
+      startedAt: "desc",
+    },
+    take: 5,
+  });
+
+  const recentCalls = recentCallsRaw.map((c: any) => ({
+    id: c.id,
+    leadId: c.leadId,
+    direction: c.direction,
+    purpose: c.purpose,
+    status: c.status,
+    startedAt: c.startedAt.toISOString(),
+  }));
+
+  // Coaching summary: calls for this agent that have coaching notes
+  const coachingEventsRaw = await prisma.auditEvent.findMany({
+    where: {
+      organizationId,
+      eventType: "CALL_COACHING_NOTE",
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: 200,
+  });
+
+  const callIds = Array.from(
+    new Set(
+      coachingEventsRaw
+        .map((e: any) => (e.metadata as any)?.callId)
+        .filter((id: any) => typeof id === "string")
+    )
+  );
+
+  let coachedCallCount = 0;
+  let avgScore: number | null = null;
+
+  if (callIds.length > 0) {
+    const callsForCoaching = await prisma.callSession.findMany({
+      where: {
+        organizationId,
+        id: { in: callIds },
+      },
+      select: {
+        id: true,
+        agentId: true,
+      },
+    });
+
+    const callAgentMap = new Map<string, string>();
+    for (const c of callsForCoaching) {
+      callAgentMap.set(c.id, c.agentId);
+    }
+
+    const agentEvents = coachingEventsRaw.filter((e: any) => {
+      const md = (e.metadata ?? {}) as any;
+      const cid = md.callId;
+      if (!cid || typeof cid !== "string") return false;
+      const agentId = callAgentMap.get(cid);
+      return agentId === userId;
+    });
+
+    const scores = agentEvents
+      .map((e: any) => {
+        const md = (e.metadata ?? {}) as any;
+        return typeof md.score === "number" ? (md.score as number) : null;
+      })
+      .filter((s): s is number => s !== null && !Number.isNaN(s));
+
+    const uniqueCallIdsForAgent = Array.from(
+      new Set(
+        agentEvents
+          .map((e: any) => (e.metadata as any)?.callId)
+          .filter((id: any) => typeof id === "string")
+      )
+    );
+
+    coachedCallCount = uniqueCallIdsForAgent.length;
+    if (scores.length > 0) {
+      avgScore =
+        scores.reduce((sum, s) => sum + s, 0) / scores.length;
+    }
+  }
+
   return {
     role: "AGENT",
     cards: {
@@ -200,6 +333,13 @@ export async function getAgentDashboard(params: {
       },
       recentScriptRuns: {
         items: recentScriptRuns,
+      },
+      recentCalls: {
+        items: recentCalls,
+      },
+      coachingSummary: {
+        coachedCallCount,
+        avgScore,
       },
     },
   };
@@ -381,7 +521,6 @@ export async function getManagerAdminDirectorDashboard(params: {
   }));
 
   // Recent lead imports from AuditEvent (eventType = LEAD_IMPORT)
-  // We keep this org-wide for now, since imports are typically global ops.
   const recentImportsRaw = await prisma.auditEvent.findMany({
     where: {
       organizationId,
@@ -407,6 +546,179 @@ export async function getManagerAdminDirectorDashboard(params: {
     };
   });
 
+  // Recent calls: org-wide or team-scoped
+  const recentCallsRaw = await prisma.callSession.findMany({
+    where: {
+      organizationId,
+      ...(teamUserIds
+        ? {
+            agentId: {
+              in: teamUserIds,
+            },
+          }
+        : {}),
+    },
+    orderBy: {
+      startedAt: "desc",
+    },
+    take: 10,
+  });
+
+  const recentCalls = recentCallsRaw.map((c: any) => ({
+    id: c.id,
+    leadId: c.leadId,
+    agentId: c.agentId,
+    direction: c.direction,
+    purpose: c.purpose,
+    status: c.status,
+    startedAt: c.startedAt.toISOString(),
+  }));
+
+  // Call volume by agent (using groupBy)
+  const callVolumeRaw = await prisma.callSession.groupBy({
+    by: ["agentId"],
+    where: {
+      organizationId,
+      ...(teamUserIds
+        ? {
+            agentId: {
+              in: teamUserIds,
+            },
+          }
+        : {}),
+    },
+    _count: {
+      _all: true,
+    },
+  });
+
+  const callVolumeByAgent = callVolumeRaw
+    .map((row: any) => ({
+      agentId: row.agentId,
+      callCount: row._count._all,
+    }))
+    .sort((a, b) => b.callCount - a.callCount)
+    .slice(0, 10);
+
+  // Coaching analytics based on CALL_COACHING_NOTE events
+  const coachingEventsRaw = await prisma.auditEvent.findMany({
+    where: {
+      organizationId,
+      eventType: "CALL_COACHING_NOTE",
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: 500,
+  });
+
+  const allCallIds = Array.from(
+    new Set(
+      coachingEventsRaw
+        .map((e: any) => (e.metadata as any)?.callId)
+        .filter((id: any) => typeof id === "string")
+    )
+  );
+
+  let coachedCallCount = 0;
+  let avgScore: number | null = null;
+  let coachingByAgentItems:
+    | {
+        agentId: string;
+        coachedCallCount: number;
+        avgScore: number | null;
+      }[]
+    = [];
+
+  if (allCallIds.length > 0) {
+    const callsForCoaching = await prisma.callSession.findMany({
+      where: {
+        organizationId,
+        id: { in: allCallIds },
+      },
+      select: {
+        id: true,
+        agentId: true,
+      },
+    });
+
+    const callAgentMap = new Map<string, string>();
+    for (const c of callsForCoaching) {
+      callAgentMap.set(c.id, c.agentId);
+    }
+
+    const filteredEvents = coachingEventsRaw.filter((e: any) => {
+      const md = (e.metadata ?? {}) as any;
+      const cid = md.callId;
+      if (!cid || typeof cid !== "string") return false;
+      const agentId = callAgentMap.get(cid);
+      if (!agentId) return false;
+      if (!teamUserIds) return true; // admin/org-wide
+      return teamUserIds.includes(agentId);
+    });
+
+    const perAgent = new Map<
+      string,
+      { callIds: Set<string>; scores: number[] }
+    >();
+
+    for (const e of filteredEvents) {
+      const md = (e.metadata ?? {}) as any;
+      const cid = md.callId;
+      if (!cid || typeof cid !== "string") continue;
+      const agentId = callAgentMap.get(cid);
+      if (!agentId) continue;
+
+      let rec = perAgent.get(agentId);
+      if (!rec) {
+        rec = { callIds: new Set<string>(), scores: [] };
+        perAgent.set(agentId, rec);
+      }
+      rec.callIds.add(cid);
+
+      const score =
+        typeof md.score === "number" && !Number.isNaN(md.score)
+          ? (md.score as number)
+          : null;
+      if (score !== null) {
+        rec.scores.push(score);
+      }
+    }
+
+    const allScores: number[] = [];
+    for (const [, rec] of perAgent) {
+      allScores.push(...rec.scores);
+    }
+
+    const uniqueCalls = new Set<string>();
+    for (const [, rec] of perAgent) {
+      rec.callIds.forEach((id) => uniqueCalls.add(id));
+    }
+
+    coachedCallCount = uniqueCalls.size;
+    if (allScores.length > 0) {
+      avgScore =
+        allScores.reduce((sum, s) => sum + s, 0) / allScores.length;
+    }
+
+    coachingByAgentItems = Array.from(perAgent.entries())
+      .map(([agentId, rec]) => {
+        const count = rec.callIds.size;
+        const localAvg =
+          rec.scores.length > 0
+            ? rec.scores.reduce((sum, s) => sum + s, 0) /
+              rec.scores.length
+            : null;
+        return {
+          agentId,
+          coachedCallCount: count,
+          avgScore: localAvg,
+        };
+      })
+      .sort((a, b) => (b.coachedCallCount - a.coachedCallCount))
+      .slice(0, 10);
+  }
+
   const cards: ManagerAdminDashboardCards = {
     teamComplianceSummary: {
       totalChecks,
@@ -423,6 +735,19 @@ export async function getManagerAdminDirectorDashboard(params: {
     },
     recentLeadImports: {
       items: recentLeadImports,
+    },
+    recentCalls: {
+      items: recentCalls,
+    },
+    callVolumeByAgent: {
+      items: callVolumeByAgent,
+    },
+    coachingSummary: {
+      coachedCallCount,
+      avgScore,
+    },
+    coachingByAgent: {
+      items: coachingByAgentItems,
     },
   };
 
@@ -465,7 +790,6 @@ export async function getDashboardForUser(params: {
   }
 
   if (role === "MANAGER" || role === "ADMIN" || role === "DIRECTOR") {
-    // MANAGER / DIRECTOR / ADMIN get team-aware or org-wide aggregates.
     const mappedRole: "MANAGER" | "ADMIN" | "DIRECTOR" =
       role === "MANAGER"
         ? "MANAGER"
@@ -480,10 +804,11 @@ export async function getDashboardForUser(params: {
     });
   }
 
-  // COMPLIANCE and READ_ONLY: reuse MANAGER-style org overview for now.
+  // COMPLIANCE and READ_ONLY: reuse MANAGER-style overview for now.
   return getManagerAdminDirectorDashboard({
     organizationId,
     role: "MANAGER",
     userId,
   });
 }
+

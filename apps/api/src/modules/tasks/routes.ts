@@ -1,4 +1,25 @@
 // apps/api/src/modules/tasks/routes.ts
+//
+// Task routes with org + role-aware scoping.
+//
+// Roles (API/JWT):
+//  - ADMIN
+//  - MANAGER
+//  - DIRECTOR
+//  - AGENT
+//  - COMPLIANCE_OFFICER
+//  - VIEW_ONLY
+//
+// Visibility for GET /api/tasks:
+//  - ADMIN / COMPLIANCE_OFFICER / VIEW_ONLY: org-wide tasks (assigneeIds = null)
+//  - DIRECTOR: self + managers + agents under them
+//  - MANAGER: self + agents they manage
+//  - AGENT: self only
+//
+// Write permissions (create/update/delete):
+//  - ADMIN / MANAGER / AGENT
+//  - DIRECTOR currently not in Roles enum, so treated like original code
+//  - COMPLIANCE_OFFICER / VIEW_ONLY are read-only for tasks.
 
 import {
   Router,
@@ -11,16 +32,204 @@ import {
   Roles,
   type AuthenticatedRequest,
 } from "../../middleware/auth";
+import { prisma } from "../../db/client";
 import {
   createTaskForLead,
   deleteTaskForLead,
   listTasksForLead,
+  listTasksForAssignees,
   updateTaskForLead,
   type ApiTaskStatus,
 } from "./service";
 import { recordAuditEvent } from "../audit/service";
 
 export const tasksRouter = Router();
+
+// Canonical API roles we expect on req.user.role
+type ApiRole =
+  | "ADMIN"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "AGENT"
+  | "COMPLIANCE_OFFICER"
+  | "VIEW_ONLY";
+
+function normalizeRole(
+  raw: string | null | undefined
+): ApiRole | null {
+  if (!raw) return null;
+  const r = String(raw).toUpperCase();
+
+  if (r === "ADMIN") return "ADMIN";
+  if (r === "MANAGER") return "MANAGER";
+  if (r === "DIRECTOR") return "DIRECTOR";
+  if (r === "AGENT") return "AGENT";
+  if (r === "COMPLIANCE" || r === "COMPLIANCE_OFFICER") {
+    return "COMPLIANCE_OFFICER";
+  }
+  if (r === "READ_ONLY" || r === "VIEW_ONLY") {
+    return "VIEW_ONLY";
+  }
+
+  return null;
+}
+
+/**
+ * Compute assignee userIds for a given user + role, using the same
+ * semantics as leads and calls:
+ *  - AGENT: self only
+ *  - MANAGER: self + agents they manage
+ *  - DIRECTOR: self + managers + agents under them
+ *  - ADMIN / COMPLIANCE_OFFICER / VIEW_ONLY: org-wide (null)
+ */
+async function getAssigneeIdsForUserRole(params: {
+  organizationId: string;
+  userId: string;
+  role: ApiRole | null;
+}): Promise<string[] | null> {
+  const { organizationId, userId, role } = params;
+
+  if (!role) {
+    // Defensive: unknown role → self only
+    return [userId];
+  }
+
+  if (
+    role === "ADMIN" ||
+    role === "COMPLIANCE_OFFICER" ||
+    role === "VIEW_ONLY"
+  ) {
+    return null; // org-wide
+  }
+
+  if (role === "AGENT") {
+    return [userId];
+  }
+
+  if (role === "MANAGER") {
+    const agents = await prisma.user.findMany({
+      where: {
+        organizationId,
+        managerId: userId,
+      },
+      select: { id: true },
+    });
+    return [userId, ...agents.map((a) => a.id)];
+  }
+
+  if (role === "DIRECTOR") {
+    const managers = await prisma.user.findMany({
+      where: {
+        organizationId,
+        directorId: userId,
+      },
+      select: { id: true },
+    });
+    const managerIds = managers.map((m) => m.id);
+
+    const agents = await prisma.user.findMany({
+      where: {
+        organizationId,
+        managerId: {
+          in: managerIds.length > 0 ? managerIds : ["__none__"],
+        },
+      },
+      select: { id: true },
+    });
+    const agentIds = agents.map((a) => a.id);
+
+    return [userId, ...managerIds, ...agentIds];
+  }
+
+  // Fallback: restrict to self
+  return [userId];
+}
+
+/**
+ * GET /api/tasks
+ *
+ * List tasks for the current user, scoped by role/team.
+ *
+ * Query params:
+ *  - status: OPEN | IN_PROGRESS | DONE | CANCELLED | ALL (optional)
+ *  - overdueOnly: "true" | "false" (optional, default false)
+ *  - limit: number (optional, default 50, max 200)
+ */
+tasksRouter.get(
+  "/",
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const user = req.user!;
+      const orgId = user.organizationId;
+      const userId = user.id;
+      const role = normalizeRole(user.role as string | undefined);
+
+      const statusParam =
+        typeof req.query.status === "string"
+          ? req.query.status
+          : undefined;
+      const overdueOnlyParam = req.query.overdueOnly === "true";
+      const limitParam =
+        typeof req.query.limit === "string"
+          ? parseInt(req.query.limit, 10)
+          : undefined;
+
+      let status: ApiTaskStatus | "ALL" | undefined;
+      if (
+        statusParam === "OPEN" ||
+        statusParam === "IN_PROGRESS" ||
+        statusParam === "DONE" ||
+        statusParam === "CANCELLED"
+      ) {
+        status = statusParam;
+      } else if (statusParam === "ALL") {
+        status = "ALL";
+      }
+
+      let limit = 50;
+      if (
+        typeof limitParam === "number" &&
+        !Number.isNaN(limitParam) &&
+        limitParam > 0 &&
+        limitParam <= 200
+      ) {
+        limit = limitParam;
+      }
+
+      const assigneeIds = await getAssigneeIdsForUserRole({
+        organizationId: orgId,
+        userId,
+        role,
+      });
+
+      const tasks = await listTasksForAssignees({
+        organizationId: orgId,
+        assigneeIds,
+        status,
+        limit,
+        overdueOnly: overdueOnlyParam,
+      });
+
+      res.json({
+        tasks: tasks.map((t) => ({
+          id: t.id,
+          leadId: t.leadId,
+          organizationId: t.organizationId,
+          title: t.title,
+          description: t.description,
+          assignedToUserId: t.assignedToUserId,
+          status: t.status,
+          dueAt: t.dueAt ? t.dueAt.toISOString() : null,
+          createdAt: t.createdAt.toISOString(),
+          updatedAt: t.updatedAt.toISOString(),
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * GET /api/tasks/:leadId
@@ -65,7 +274,7 @@ tasksRouter.get(
  * POST /api/tasks/:leadId
  * Create a new task for the lead.
  *
- * Roles: ADMIN, AGENT, MANAGER
+ * Allowed roles (via Roles enum): ADMIN, AGENT, MANAGER
  *
  * Body: { title: string; description?: string; assignedToUserId?: string; status?: ApiTaskStatus; dueAt?: string }
  */
@@ -147,7 +356,7 @@ tasksRouter.post(
  * PATCH /api/tasks/:leadId/:taskId
  * Update an existing task.
  *
- * Roles: ADMIN, AGENT, MANAGER
+ * Allowed roles: ADMIN, AGENT, MANAGER
  */
 tasksRouter.patch(
   "/:leadId/:taskId",
@@ -231,7 +440,7 @@ tasksRouter.patch(
  * DELETE /api/tasks/:leadId/:taskId
  * Delete a task.
  *
- * Roles: ADMIN, AGENT, MANAGER
+ * Allowed roles: ADMIN, AGENT, MANAGER
  */
 tasksRouter.delete(
   "/:leadId/:taskId",

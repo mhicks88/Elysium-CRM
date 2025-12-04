@@ -11,20 +11,24 @@
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
-    "test": "jest --passWithNoTests"
+    "test": "jest --passWithNoTests",
+    "seed:dev": "ts-node src/scripts/seedDevData.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
+    "@types/multer": "^2.0.0",
     "bcrypt": "5.1.1",
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "2.8.5",
     "dotenv": "16.4.5",
     "express": "^4.21.2",
     "jsonwebtoken": "9.0.2",
     "morgan": "^1.10.1",
+    "multer": "^2.0.2",
     "zod": "3.23.8"
   },
   "devDependencies": {
@@ -34,12 +38,12 @@
     "@types/express": "4.17.21",
     "@types/jsonwebtoken": "9.0.6",
     "@types/morgan": "1.9.9",
-    "@types/node": "20.12.7",
+    "@types/node": "^20.12.7",
     "jest": "29.7.0",
     "prisma": "5.22.0",
     "ts-jest": "29.1.2",
-    "ts-node": "10.9.2",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "2.0.0",
-    "typescript": "5.4.5"
+    "typescript": "^5.4.5"
   }
 }

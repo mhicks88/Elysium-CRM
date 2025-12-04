@@ -26,7 +26,7 @@ async function refreshAccessToken(): Promise<string | null> {
   try {
     const res = await fetch(buildUrl("/api/auth/refresh"), {
       method: "POST",
-      credentials: "include", // important: send refreshToken cookie
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
       },
@@ -47,7 +47,7 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 type ApiOptions = RequestInit & {
-  auth?: boolean; // default true – whether to attach Authorization
+  auth?: boolean;
 };
 
 export async function apiFetch<T = unknown>(
@@ -57,9 +57,19 @@ export async function apiFetch<T = unknown>(
   const { auth = true, ...rest } = init;
 
   const headers: HeadersInit = {
-    "Content-Type": "application/json",
     ...(rest.headers || {}),
   };
+
+  const hasContentTypeHeader = Object.keys(headers).some(
+    (k) => k.toLowerCase() === "content-type"
+  );
+
+  const isFormData =
+    typeof FormData !== "undefined" && rest.body instanceof FormData;
+
+  if (!hasContentTypeHeader && !isFormData) {
+    (headers as any)["Content-Type"] = "application/json";
+  }
 
   if (auth && accessToken) {
     (headers as any)["Authorization"] = `Bearer ${accessToken}`;
@@ -70,10 +80,9 @@ export async function apiFetch<T = unknown>(
   const firstResponse = await fetch(url, {
     ...rest,
     headers,
-    credentials: rest.credentials ?? "include", // send cookies by default
+    credentials: rest.credentials ?? "include",
   });
 
-  // If not an auth-protected route or response is ok, return directly
   if (!auth || firstResponse.status !== 401) {
     if (!firstResponse.ok) {
       const text = await firstResponse.text();
@@ -81,18 +90,18 @@ export async function apiFetch<T = unknown>(
         `API error ${firstResponse.status}: ${text || firstResponse.statusText}`
       );
     }
-    return (await firstResponse.json()) as T;
+
+    const text = await firstResponse.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
   }
 
-  // 401 on an authenticated route → try to refresh token
   const newAccessToken = await refreshAccessToken();
   if (!newAccessToken) {
-    // Hard logout path
     window.location.href = "/login";
     throw new Error("Session expired");
   }
 
-  // Retry original request with new token
   const retryHeaders: HeadersInit = {
     ...headers,
     Authorization: `Bearer ${newAccessToken}`,
@@ -113,14 +122,15 @@ export async function apiFetch<T = unknown>(
     );
   }
 
-  return (await retryResponse.json()) as T;
+  const retryText = await retryResponse.text();
+  if (!retryText) return undefined as T;
+  return JSON.parse(retryText) as T;
 }
 
 // -----------------------------------------------------------------------------
 // AUTH
 // -----------------------------------------------------------------------------
 
-// Simple login helper used by src/routes/auth/index.tsx
 export async function login(payload: { email: string; password: string }) {
   const res = await fetch(buildUrl("/api/auth/login"), {
     method: "POST",
@@ -157,7 +167,8 @@ export async function runPreCallCheck(
 // LEADS
 // -----------------------------------------------------------------------------
 
-// List leads
+export type ApiTaskStatus = "OPEN" | "IN_PROGRESS" | "DONE" | "CANCELLED";
+
 export async function getLeads(params: {
   page?: number;
   pageSize?: number;
@@ -180,12 +191,14 @@ export async function getLeads(params: {
   return apiFetch<any>(url, { method: "GET" });
 }
 
-// Fetch single lead
 export async function getLeadById(id: string) {
   return apiFetch<any>(`/api/leads/${id}`, { method: "GET" });
 }
 
-// Update lead
+export async function getNextLead() {
+  return apiFetch<any>("/api/leads/next", { method: "GET" });
+}
+
 export async function updateLead(
   id: string,
   payload: Record<string, unknown>
@@ -196,7 +209,6 @@ export async function updateLead(
   });
 }
 
-// Create lead
 export async function createLead(payload: Record<string, unknown>) {
   return apiFetch<any>("/api/leads", {
     method: "POST",
@@ -205,11 +217,67 @@ export async function createLead(payload: Record<string, unknown>) {
 }
 
 // -----------------------------------------------------------------------------
+// TASKS
+// -----------------------------------------------------------------------------
+
+export type TaskDto = {
+  id: string;
+  leadId: string;
+  organizationId: string;
+  assignedToUserId: string;
+  title: string;
+  description: string | null;
+  status: ApiTaskStatus;
+  dueAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function getTasksList(params: {
+  status?: ApiTaskStatus | "ALL";
+  overdueOnly?: boolean;
+  limit?: number;
+} = {}): Promise<{ tasks: TaskDto[] }> {
+  const search = new URLSearchParams();
+  if (params.status) search.set("status", params.status);
+  if (params.overdueOnly) search.set("overdueOnly", "true");
+  if (params.limit !== undefined) {
+    search.set("limit", String(params.limit));
+  }
+
+  const qs = search.toString();
+  const url = qs ? `/api/tasks?${qs}` : "/api/tasks";
+
+  return apiFetch<{ tasks: TaskDto[] }>(url, {
+    method: "GET",
+  });
+}
+
+export async function updateTask(
+  leadId: string,
+  taskId: string,
+  payload: Partial<{
+    title: string;
+    description: string | null;
+    assignedToUserId: string | null;
+    status: ApiTaskStatus;
+    dueAt: string | null;
+  }>
+): Promise<TaskDto> {
+  return apiFetch<TaskDto>(
+    `/api/tasks/${encodeURIComponent(leadId)}/${encodeURIComponent(taskId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+// -----------------------------------------------------------------------------
 // AUDIT LOG
 // -----------------------------------------------------------------------------
 
 export async function getAuditEvents(leadId: string) {
-  // Backend now returns { events, nextCursor }, but the UI can ignore nextCursor for now.
   return apiFetch<{ events: any[]; nextCursor?: string | null }>(
     `/api/audit/${leadId}`,
     {
@@ -337,10 +405,6 @@ export type CallScriptRunSummary = {
   agentId: string;
 };
 
-/**
- * List active scripts for the current org.
- * Optional filter by purpose.
- */
 export async function getCallScripts(purpose?: string) {
   const qs = purpose ? `?purpose=${encodeURIComponent(purpose)}` : "";
   return apiFetch<{ scripts: CallScript[] }>(
@@ -349,9 +413,6 @@ export async function getCallScripts(purpose?: string) {
   );
 }
 
-/**
- * Fetch a single script by id.
- */
 export async function getCallScriptById(scriptId: string) {
   return apiFetch<{ script: CallScript }>(
     `/api/call-scripts/${encodeURIComponent(scriptId)}`,
@@ -359,10 +420,6 @@ export async function getCallScriptById(scriptId: string) {
   );
 }
 
-/**
- * Start a new script run for a lead.
- * Either pass scriptId, or purpose to auto-resolve the script.
- */
 export async function startCallScriptRun(params: {
   leadId: string;
   scriptId?: string;
@@ -378,9 +435,6 @@ export async function startCallScriptRun(params: {
   });
 }
 
-/**
- * Step a script run by selecting an optionId.
- */
 export async function stepCallScriptRun(runId: string, optionId: string) {
   return apiFetch<{
     runId: string;
@@ -392,9 +446,6 @@ export async function stepCallScriptRun(runId: string, optionId: string) {
   });
 }
 
-/**
- * End a script run explicitly (e.g., agent abandons or completes with outcome).
- */
 export async function endCallScriptRun(params: {
   runId: string;
   outcome?: string;
@@ -413,9 +464,6 @@ export async function endCallScriptRun(params: {
   );
 }
 
-/**
- * Get recent script runs for a lead.
- */
 export async function getCallScriptRunsForLead(leadId: string) {
   return apiFetch<{ runs: CallScriptRunSummary[] }>(
     `/api/call-scripts/leads/${encodeURIComponent(leadId)}/runs`,
@@ -426,44 +474,260 @@ export async function getCallScriptRunsForLead(leadId: string) {
 }
 
 // -----------------------------------------------------------------------------
-// LEAD IMPORT – NEW
+// CALLS (SESSIONS)
 // -----------------------------------------------------------------------------
 
-export type LeadImportRow = {
-  name: string;
-  phone: string;
-  source: string;
-  email?: string | null;
-  state?: string | null;
+export type CallSessionDto = {
+  id: string;
+  organizationId: string;
+  leadId: string;
+  agentId: string;
+  dialerIntegrationId: string;
+  externalCallId: string;
+  direction: string;
+  purpose: string;
+  status: string;
+  complianceState: string;
+  startedAt: string;
+  connectedAt: string | null;
+  endedAt: string | null;
+  recordingUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
-export type LeadImportSummary = {
-  success: boolean;
-  totalRows: number;
-  validRows: number;
-  insertedCount: number;
-  duplicateCount: number;
-  errorCount: number;
-  errors: {
-    rowIndex: number;
-    message: string;
-  }[];
-};
+export async function getCalls(params: {
+  leadId?: string;
+  limit?: number;
+} = {}): Promise<{ calls: CallSessionDto[] }> {
+  const search = new URLSearchParams();
+  if (params.leadId) search.set("leadId", params.leadId);
+  if (params.limit !== undefined) {
+    search.set("limit", String(params.limit));
+  }
 
-/**
- * Run a manual lead import (ADMIN/MANAGER only).
- * Expects rows in the same RawImportedLeadRow shape used by the backend.
- */
-export async function runManualLeadImport(
-  rows: LeadImportRow[],
-  label?: string
-): Promise<LeadImportSummary> {
-  return apiFetch<LeadImportSummary>("/api/lead-import/manual", {
+  const qs = search.toString();
+  const url = qs ? `/api/calls?${qs}` : "/api/calls";
+
+  return apiFetch<{ calls: CallSessionDto[] }>(url, {
+    method: "GET",
+  });
+}
+
+export async function getCallById(
+  id: string
+): Promise<CallSessionDto> {
+  return apiFetch<CallSessionDto>(`/api/calls/${encodeURIComponent(id)}`, {
+    method: "GET",
+  });
+}
+
+export async function createCall(params: {
+  leadId: string;
+  direction: "INBOUND" | "OUTBOUND";
+  purpose: "EDUCATION" | "MARKETING" | "ENROLLMENT" | "SERVICE";
+  status?: string;
+  externalCallId?: string;
+  startedAt?: string;
+  connectedAt?: string;
+  endedAt?: string;
+}): Promise<CallSessionDto> {
+  return apiFetch<CallSessionDto>("/api/calls", {
     method: "POST",
-    body: JSON.stringify({
-      rows,
-      label: label ?? undefined,
-    }),
+    body: JSON.stringify(params),
+  });
+}
+
+// Coaching notes
+export type CallCoachingNote = {
+  id: string;
+  callId: string;
+  score: number | null;
+  notes: string;
+  createdAt: string;
+  coachUserId: string | null;
+  coachName: string | null;
+  coachEmail: string | null;
+};
+
+export async function getCallCoachingNotes(
+  callId: string
+): Promise<{ notes: CallCoachingNote[] }> {
+  return apiFetch<{ notes: CallCoachingNote[] }>(
+    `/api/calls/${encodeURIComponent(callId)}/coaching`,
+    {
+      method: "GET",
+    }
+  );
+}
+
+export async function addCallCoachingNote(
+  callId: string,
+  payload: { score?: number; notes: string }
+): Promise<CallCoachingNote> {
+  return apiFetch<CallCoachingNote>(
+    `/api/calls/${encodeURIComponent(callId)}/coaching`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+// Dispositions
+export type CallDisposition =
+  | "NO_ANSWER"
+  | "LEFT_VOICEMAIL"
+  | "CALLBACK"
+  | "NOT_INTERESTED"
+  | "QUALIFIED"
+  | "TRANSFERRED"
+  | "INVALID_NUMBER"
+  | "OTHER";
+
+export async function setCallDisposition(
+  callId: string,
+  payload: {
+    disposition: CallDisposition;
+    callbackAt?: string | null;
+    notes?: string;
+  }
+): Promise<{
+  callId: string;
+  disposition: CallDisposition;
+  callbackAt: string | null;
+  createdTaskId: string | null;
+  newLeadStatus: string | null;
+}> {
+  return apiFetch<{
+    callId: string;
+    disposition: CallDisposition;
+    callbackAt: string | null;
+    createdTaskId: string | null;
+    newLeadStatus: string | null;
+  }>(`/api/calls/${encodeURIComponent(callId)}/disposition`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Coaching queue
+export type CoachingQueueItem = {
+  callId: string;
+  leadId: string;
+  agentId: string;
+  direction: string;
+  purpose: string;
+  status: string;
+  startedAt: string | null;
+  lastCoachedAt: string;
+  lastScore: number | null;
+  noteCount: number;
+};
+
+export async function getCoachingQueue(limit = 50): Promise<{
+  items: CoachingQueueItem[];
+}> {
+  const url = `/api/calls/coaching-queue/list?limit=${encodeURIComponent(
+    String(limit)
+  )}`;
+  return apiFetch<{ items: CoachingQueueItem[] }>(url, {
+    method: "GET",
+  });
+}
+
+// -----------------------------------------------------------------------------
+// NOTES (Internal per lead)
+// -----------------------------------------------------------------------------
+
+export type LeadNote = {
+  id: string;
+  leadId: string;
+  body: string;
+  createdAt: string;
+  authorUserId: string;
+  authorName: string | null;
+  authorEmail: string | null;
+};
+
+export async function getLeadNotes(
+  leadId: string
+): Promise<{ notes: LeadNote[] }> {
+  return apiFetch<{ notes: LeadNote[] }>(
+    `/api/notes/${encodeURIComponent(leadId)}`,
+    {
+      method: "GET",
+    }
+  );
+}
+
+export async function createLeadNote(
+  leadId: string,
+  body: string
+): Promise<LeadNote> {
+  return apiFetch<LeadNote>(`/api/notes/${encodeURIComponent(leadId)}`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+}
+
+// -----------------------------------------------------------------------------
+// LEAD IMPORT – CSV UPLOAD + JOB LIST
+// -----------------------------------------------------------------------------
+
+export type LeadCsvImportSummary = {
+  jobId: string;
+  filename: string | null;
+  source: string | null;
+  totalRows: number;
+  createdCount: number;
+  duplicateCount: number;
+  failedCount: number;
+};
+
+export type LeadImportJobSummary = {
+  id: string;
+  filename: string | null;
+  source: string | null;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  totalRows: number;
+  createdCount: number;
+  duplicateCount: number;
+  failedCount: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdBy: {
+    id: string;
+    email: string;
+    name: string;
+  } | null;
+};
+
+export async function uploadLeadImportCsv(
+  file: File,
+  options: { source?: string } = {}
+): Promise<LeadCsvImportSummary> {
+  const form = new FormData();
+  form.append("file", file);
+  if (options.source) {
+    form.append("source", options.source);
+  }
+
+  return apiFetch<LeadCsvImportSummary>("/api/leads/import", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export async function getRecentLeadImports(limit = 10): Promise<{
+  jobs: LeadImportJobSummary[];
+}> {
+  const url = `/api/leads/import/jobs?limit=${encodeURIComponent(
+    String(limit)
+  )}`;
+  return apiFetch<{ jobs: LeadImportJobSummary[] }>(url, {
+    method: "GET",
   });
 }
 
@@ -471,12 +735,8 @@ export async function runManualLeadImport(
 // DASHBOARD
 // -----------------------------------------------------------------------------
 
-// Keep this loose for now; you can tighten types later using the server schema.
 export type DashboardResponse = any;
 
-/**
- * Get role-based dashboard data for the current user.
- */
 export async function getDashboard(): Promise<DashboardResponse> {
   return apiFetch<DashboardResponse>("/api/dashboard", {
     method: "GET",

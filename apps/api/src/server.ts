@@ -6,7 +6,7 @@ import cookieParser from "cookie-parser";
 
 // Routers
 import { authRouter } from "./modules/auth/routes";
-import * as leadsModule from "./modules/leads/routes";
+import { leadsRouter } from "./modules/leads/routes";
 import { complianceRouter } from "./modules/compliance/routes";
 import { complianceHistoryRouter } from "./modules/complianceHistory/routes";
 import { complianceAdminRouter } from "./modules/complianceAdmin/routes";
@@ -17,12 +17,9 @@ import { callScriptsRouter } from "./modules/callScripts/routes";
 import { leadImportRouter } from "./modules/leadImport/routes";
 import { dashboardRouter } from "./modules/dashboard/routes";
 import { usersRouter } from "./modules/users/routes";
-
-// Make the leads router import robust regardless of how the module exports it.
-const leadsRouter =
-  (leadsModule as any).leadsRouter ||
-  (leadsModule as any).default ||
-  leadsModule;
+import { callsRouter } from "./modules/calls/routes";
+import { notesRouter } from "./modules/notes/routes";
+import { workRouter } from "./modules/work/routes";
 
 /**
  * Build and configure the Express app instance.
@@ -49,9 +46,18 @@ export function createApp(): Application {
   app.use("/api/auth", authRouter);
   app.use("/api/leads", leadsRouter);
 
+  // Calls
+  app.use("/api/calls", callsRouter);
+
+  // Notes per lead
+  app.use("/api/notes", notesRouter);
+
+  // Work queue (next best lead)
+  app.use("/api/work", workRouter);
+
   // Compliance main routes
   app.use("/api/compliance", complianceRouter);
-  app.use(complianceRouter); // backward compatibility for any older routes using /api/compliance internally
+  app.use(complianceRouter); // backward compatibility
 
   // Compliance history routes
   app.use("/api/compliance/history", complianceHistoryRouter);
@@ -111,3 +117,4 @@ export function createServer(): http.Server {
   const app = createApp();
   return http.createServer(app);
 }
+

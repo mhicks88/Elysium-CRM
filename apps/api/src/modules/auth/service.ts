@@ -13,7 +13,15 @@ const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_PROD";
 export type User = {
   id: string;
   email: string;
-  role: "ADMIN" | "AGENT" | "VIEW_ONLY" | "MANAGER" | "COMPLIANCE_OFFICER";
+  // This is the role shape we expose to the frontend / JWT.
+  // It intentionally uses VIEW_ONLY / COMPLIANCE_OFFICER to match existing UI code.
+  role:
+    | "ADMIN"
+    | "AGENT"
+    | "VIEW_ONLY"
+    | "MANAGER"
+    | "COMPLIANCE_OFFICER"
+    | "DIRECTOR";
   organizationId: string;
 };
 
@@ -43,7 +51,8 @@ export function verifyAccessToken(token: string): AccessTokenPayload {
 
 export function createSessionForUser(user: User, req: Request) {
   const userAgent = req.header("user-agent") ?? null;
-  const ipAddress = (req.headers["x-forwarded-for"] as string) || req.ip || null;
+  const ipAddress =
+    (req.headers["x-forwarded-for"] as string) || req.ip || null;
 
   return createSessionToken(user.id, userAgent, ipAddress);
 }

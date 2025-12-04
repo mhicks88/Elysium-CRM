@@ -6,10 +6,35 @@ import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { Input } from "../../components/ui/Input";
-import { getLeads, updateLead } from "../../lib/apiClient";
+import { getLeads, updateLead, getNextLead } from "../../lib/apiClient";
 import { useAuth } from "../../lib/auth";
 
-type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
+// Backend lead statuses
+type LeadStatus =
+  | "NEW"
+  | "CONTACT_ATTEMPTED"
+  | "CONTACTED"
+  | "SOA_REQUIRED"
+  | "SOA_COMPLETED"
+  | "IN_DISCUSSION"
+  | "ENROLLED"
+  | "NOT_INTERESTED"
+  | "DO_NOT_CONTACT";
+
+// UI grouping for filters/summary
+type LeadStatusGroup =
+  | "NEW"
+  | "IN_PROGRESS"
+  | "ENROLLED"
+  | "DO_NOT_CONTACT";
+
+type Role =
+  | "ADMIN"
+  | "AGENT"
+  | "VIEW_ONLY"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "COMPLIANCE_OFFICER";
 
 interface LeadListItem {
   id: string;
@@ -28,15 +53,15 @@ interface LeadListItem {
   assignedToUserId?: string | null;
 }
 
-const statusLabel: Record<LeadStatus, string> = {
+const statusLabel: Record<LeadStatusGroup, string> = {
   NEW: "New",
   IN_PROGRESS: "In progress",
   ENROLLED: "Enrolled",
   DO_NOT_CONTACT: "Do Not Contact",
 };
 
-function statusBadgeVariant(status: LeadStatus) {
-  switch (status) {
+function statusBadgeVariant(statusGroup: LeadStatusGroup) {
+  switch (statusGroup) {
     case "ENROLLED":
       return "success" as const;
     case "DO_NOT_CONTACT":
@@ -46,6 +71,28 @@ function statusBadgeVariant(status: LeadStatus) {
     case "NEW":
     default:
       return "neutral" as const;
+  }
+}
+
+/**
+ * Map backend status → UI status group.
+ */
+function getStatusGroup(status: LeadStatus): LeadStatusGroup {
+  switch (status) {
+    case "NEW":
+      return "NEW";
+    case "ENROLLED":
+      return "ENROLLED";
+    case "DO_NOT_CONTACT":
+    case "NOT_INTERESTED":
+      return "DO_NOT_CONTACT";
+    case "CONTACT_ATTEMPTED":
+    case "CONTACTED":
+    case "SOA_REQUIRED":
+    case "SOA_COMPLETED":
+    case "IN_DISCUSSION":
+    default:
+      return "IN_PROGRESS";
   }
 }
 
@@ -103,15 +150,27 @@ const LeadsIndex: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth() as { user: any | null };
   const currentUserId = user?.id ?? null;
+  const userRole = (user?.role ?? null) as Role | null;
+
+  // Frontend RBAC: who can mutate leads?
+  const canWriteLeads =
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "DIRECTOR" ||
+    userRole === "AGENT";
 
   const [leads, setLeads] = useState<LeadListItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<LeadStatus | "ALL">("ALL");
-  const [showMyLeadsOnly, setShowMyLeadsOnly] = useState<boolean>(false);
+  const [statusFilter, setStatusFilter] = useState<LeadStatusGroup | "ALL">(
+    "ALL"
+  );
+  const [showMyLeadsOnly, setShowMyLeadsOnly] =
+    useState<boolean>(false);
   const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [nextLoading, setNextLoading] = useState<boolean>(false);
 
   useEffect(() => {
     let mounted = true;
@@ -142,7 +201,9 @@ const LeadsIndex: React.FC = () => {
   const filteredLeads = useMemo(() => {
     const term = search.trim().toLowerCase();
     return leads.filter((lead) => {
-      if (statusFilter !== "ALL" && lead.status !== statusFilter) {
+      const group = getStatusGroup(lead.status);
+
+      if (statusFilter !== "ALL" && group !== statusFilter) {
         return false;
       }
 
@@ -171,7 +232,7 @@ const LeadsIndex: React.FC = () => {
   }, [leads, search, statusFilter, showMyLeadsOnly, currentUserId]);
 
   const counts = useMemo(() => {
-    const base: Record<LeadStatus | "total", number> = {
+    const base: Record<LeadStatusGroup | "total", number> = {
       total: leads.length,
       NEW: 0,
       IN_PROGRESS: 0,
@@ -180,7 +241,8 @@ const LeadsIndex: React.FC = () => {
     };
 
     for (const lead of leads) {
-      base[lead.status] += 1;
+      const group = getStatusGroup(lead.status);
+      base[group] += 1;
     }
 
     return base;
@@ -189,10 +251,11 @@ const LeadsIndex: React.FC = () => {
   const myLeadsCount =
     currentUserId == null
       ? 0
-      : leads.filter((l) => l.assignedToUserId === currentUserId).length;
+      : leads.filter((l) => l.assignedToUserId === currentUserId)
+          .length;
 
   async function handleAssignToMe(lead: LeadListItem) {
-    if (!currentUserId) return;
+    if (!currentUserId || !canWriteLeads) return;
     setAssigningId(lead.id);
     setError(null);
     try {
@@ -218,6 +281,23 @@ const LeadsIndex: React.FC = () => {
     }
   }
 
+  async function handleNextLead() {
+    setNextLoading(true);
+    setError(null);
+    try {
+      const next = await getNextLead();
+      if (next && next.id) {
+        navigate(`/leads/${next.id}`);
+      } else {
+        setError("No next lead available");
+      }
+    } catch (err: any) {
+      setError(err?.message ?? "Failed to fetch next lead");
+    } finally {
+      setNextLoading(false);
+    }
+  }
+
   return (
     <AppShell>
       <div
@@ -235,24 +315,47 @@ const LeadsIndex: React.FC = () => {
             gap: "0.5rem",
           }}
         >
-          <h1
+          <div
             style={{
-              fontSize: "var(--text-2xl)",
-              fontWeight: 600,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "var(--space-4)",
             }}
           >
-            Leads
-          </h1>
-          <p
-            style={{
-              fontSize: "var(--text-sm)",
-              color: "var(--color-text-soft)",
-              maxWidth: "40rem",
-            }}
-          >
-            Your central queue of inbound and outbound leads. Use filters to
-            focus on what actually needs action, not the entire universe.
-          </p>
+            <div>
+              <h1
+                style={{
+                  fontSize: "var(--text-2xl)",
+                  fontWeight: 600,
+                }}
+              >
+                Leads
+              </h1>
+              <p
+                style={{
+                  fontSize: "var(--text-sm)",
+                  color: "var(--color-text-soft)",
+                  maxWidth: "40rem",
+                }}
+              >
+                Your central queue of inbound and outbound leads. Use
+                filters to focus on what actually needs action, not the
+                entire universe.
+              </p>
+            </div>
+
+            <Button
+              size="sm"
+              isLoading={nextLoading}
+              disabled={nextLoading}
+              onClick={() => {
+                void handleNextLead();
+              }}
+            >
+              Next lead
+            </Button>
+          </div>
         </div>
 
         {/* Error message */}
@@ -346,14 +449,14 @@ const LeadsIndex: React.FC = () => {
             </p>
           </Card>
 
-          <Card title="Enrolled">
+          <Card title="Enrolled / DNC">
             <div
               style={{
                 fontSize: "1.75rem",
                 fontWeight: 600,
               }}
             >
-              {counts.ENROLLED}
+              {counts.ENROLLED + counts.DO_NOT_CONTACT}
             </div>
             <p
               style={{
@@ -362,7 +465,7 @@ const LeadsIndex: React.FC = () => {
                 color: "var(--color-text-soft)",
               }}
             >
-              Leads successfully converted into enrollments.
+              Closed outcomes (enrolled or no-contact).
             </p>
           </Card>
         </div>
@@ -381,7 +484,9 @@ const LeadsIndex: React.FC = () => {
             >
               {currentUserId && (
                 <Button
-                  variant={showMyLeadsOnly ? "primary" : "secondary"}
+                  variant={
+                    showMyLeadsOnly ? "primary" : "secondary"
+                  }
                   size="sm"
                   onClick={() =>
                     setShowMyLeadsOnly((prev) => !prev)
@@ -392,14 +497,16 @@ const LeadsIndex: React.FC = () => {
                     : `My leads (${myLeadsCount})`}
                 </Button>
               )}
-              <Button
-                size="sm"
-                onClick={() => {
-                  navigate("/leads/new");
-                }}
-              >
-                + New lead
-              </Button>
+              {canWriteLeads && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    navigate("/leads/new");
+                  }}
+                >
+                  + New lead
+                </Button>
+              )}
             </div>
           }
         >
@@ -426,32 +533,38 @@ const LeadsIndex: React.FC = () => {
                 gap: "0.5rem",
               }}
             >
-              {(["ALL", "NEW", "IN_PROGRESS", "ENROLLED", "DO_NOT_CONTACT"] as const).map(
-                (statusKey) => {
-                  const isActive = statusFilter === statusKey;
-                  const label =
-                    statusKey === "ALL"
-                      ? "All"
-                      : statusLabel[statusKey as LeadStatus];
+              {(
+                [
+                  "ALL",
+                  "NEW",
+                  "IN_PROGRESS",
+                  "ENROLLED",
+                  "DO_NOT_CONTACT",
+                ] as const
+              ).map((statusKey) => {
+                const isActive = statusFilter === statusKey;
+                const label =
+                  statusKey === "ALL"
+                    ? "All"
+                    : statusLabel[statusKey as LeadStatusGroup];
 
-                  return (
-                    <Button
-                      key={statusKey}
-                      variant={isActive ? "primary" : "secondary"}
-                      size="sm"
-                      onClick={() =>
-                        setStatusFilter(
-                          statusKey === "ALL"
-                            ? "ALL"
-                            : (statusKey as LeadStatus)
-                        )
-                      }
-                    >
-                      {label}
-                    </Button>
-                  );
-                }
-              )}
+                return (
+                  <Button
+                    key={statusKey}
+                    variant={isActive ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() =>
+                      setStatusFilter(
+                        statusKey === "ALL"
+                          ? "ALL"
+                          : (statusKey as LeadStatusGroup)
+                      )
+                    }
+                  >
+                    {label}
+                  </Button>
+                );
+              })}
             </div>
           </div>
         </Card>
@@ -511,17 +624,22 @@ const LeadsIndex: React.FC = () => {
                     <th style={{ padding: "0.5rem" }}>Assignee</th>
                     <th style={{ padding: "0.5rem" }}>Location</th>
                     <th style={{ padding: "0.5rem" }}>Status</th>
-                    <th style={{ padding: "0.5rem" }}>Contact status</th>
+                    <th style={{ padding: "0.5rem" }}>
+                      Contact status
+                    </th>
                     <th style={{ padding: "0.5rem" }}>Created</th>
                     <th style={{ padding: "0.5rem" }} />
                   </tr>
                 </thead>
                 <tbody>
                   {filteredLeads.map((lead) => {
-                    const contactStatus = computeContactCompliance(lead);
+                    const contactStatus =
+                      computeContactCompliance(lead);
                     const canAssignToMe =
                       !!currentUserId &&
+                      canWriteLeads &&
                       lead.assignedToUserId !== currentUserId;
+                    const group = getStatusGroup(lead.status);
 
                     return (
                       <tr
@@ -564,8 +682,10 @@ const LeadsIndex: React.FC = () => {
                             {lead.phone && (
                               <span
                                 style={{
-                                  fontSize: "var(--text-xs)",
-                                  color: "var(--color-text-soft)",
+                                  fontSize:
+                                    "var(--text-xs)",
+                                  color:
+                                    "var(--color-text-soft)",
                                 }}
                               >
                                 {lead.phone}
@@ -577,8 +697,10 @@ const LeadsIndex: React.FC = () => {
                           {lead.assignedToUserId ? (
                             <span
                               style={{
-                                fontSize: "var(--text-xs)",
-                                color: "var(--color-text-soft)",
+                                fontSize:
+                                  "var(--text-xs)",
+                                color:
+                                  "var(--color-text-soft)",
                               }}
                             >
                               {lead.assignedToUserId}
@@ -586,8 +708,10 @@ const LeadsIndex: React.FC = () => {
                           ) : (
                             <span
                               style={{
-                                fontSize: "var(--text-xs)",
-                                color: "var(--color-text-soft)",
+                                fontSize:
+                                  "var(--text-xs)",
+                                color:
+                                  "var(--color-text-soft)",
                                 fontStyle: "italic",
                               }}
                             >
@@ -601,8 +725,10 @@ const LeadsIndex: React.FC = () => {
                           ) : (
                             <span
                               style={{
-                                fontSize: "var(--text-xs)",
-                                color: "var(--color-text-soft)",
+                                fontSize:
+                                  "var(--text-xs)",
+                                color:
+                                  "var(--color-text-soft)",
                               }}
                             >
                               Unknown
@@ -610,8 +736,8 @@ const LeadsIndex: React.FC = () => {
                           )}
                         </td>
                         <td style={{ padding: "0.5rem" }}>
-                          <Badge variant={statusBadgeVariant(lead.status)}>
-                            {statusLabel[lead.status]}
+                          <Badge variant={statusBadgeVariant(group)}>
+                            {statusLabel[group]}
                           </Badge>
                         </td>
                         <td style={{ padding: "0.5rem" }}>
@@ -623,7 +749,8 @@ const LeadsIndex: React.FC = () => {
                           <span
                             style={{
                               fontSize: "var(--text-xs)",
-                              color: "var(--color-text-soft)",
+                              color:
+                                "var(--color-text-soft)",
                             }}
                           >
                             {new Date(
@@ -681,3 +808,4 @@ const LeadsIndex: React.FC = () => {
 };
 
 export default LeadsIndex;
+
