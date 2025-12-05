@@ -22,35 +22,49 @@ interface CallScriptPanelProps {
 /**
  * CallScriptPanel
  *
- * Phase 0 UI for interactive call scripts on a single lead.
+ * Interactive call script runner for a single lead.
  * - Lists active scripts
  * - Lets the agent start a script run
- * - Steps through nodes based on lead responses
+ * - Steps through nodes based on responses
  * - Ends the script run
  * - Shows recent script runs for this lead
  *
  * NOTE: This component does not wrap itself in a Card. The parent
  * (LeadDetail) should render it inside a Card.
  */
-export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
+export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({
+  leadId,
+}) => {
   const [scripts, setScripts] = useState<CallScript[]>([]);
   const [loadingScripts, setLoadingScripts] = useState(false);
-  const [scriptsError, setScriptsError] = useState<string | null>(null);
+  const [scriptsError, setScriptsError] =
+    useState<string | null>(null);
 
-  const [selectedScriptId, setSelectedScriptId] = useState<string>("");
+  const [selectedScriptId, setSelectedScriptId] =
+    useState<string>("");
 
   const [runId, setRunId] = useState<string | null>(null);
-  const [runStatus, setRunStatus] = useState<ScriptRunStatus | null>(null);
-  const [currentNode, setCurrentNode] = useState<CallScriptNode | null>(null);
-  const [currentScript, setCurrentScript] = useState<CallScript | null>(null);
+  const [runStatus, setRunStatus] =
+    useState<ScriptRunStatus | null>(null);
+  const [currentNode, setCurrentNode] =
+    useState<CallScriptNode | null>(null);
+  const [currentScript, setCurrentScript] =
+    useState<CallScript | null>(null);
   const [startingRun, setStartingRun] = useState(false);
   const [stepping, setStepping] = useState(false);
   const [endingRun, setEndingRun] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
-  const [history, setHistory] = useState<CallScriptRunSummary[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [history, setHistory] = useState<CallScriptRunSummary[]>(
+    []
+  );
+  const [loadingHistory, setLoadingHistory] =
+    useState(false);
+  const [historyError, setHistoryError] =
+    useState<string | null>(null);
+
+  const hasActiveRun =
+    runId !== null && runStatus === "IN_PROGRESS";
 
   // Load scripts on mount
   useEffect(() => {
@@ -61,13 +75,16 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
       try {
         const res = await getCallScripts();
         if (!mounted) return;
-        setScripts(res.scripts || []);
-        if (res.scripts && res.scripts.length > 0) {
-          setSelectedScriptId(res.scripts[0].id);
+        const list = res.scripts || [];
+        setScripts(list);
+        if (list.length > 0) {
+          setSelectedScriptId(list[0].id);
         }
       } catch (err: any) {
         if (!mounted) return;
-        setScriptsError(err?.message ?? "Failed to load call scripts");
+        setScriptsError(
+          err?.message ?? "Failed to load call scripts"
+        );
       } finally {
         if (mounted) setLoadingScripts(false);
       }
@@ -86,7 +103,9 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
       const res = await getCallScriptRunsForLead(leadId);
       setHistory(res.runs || []);
     } catch (err: any) {
-      setHistoryError(err?.message ?? "Failed to load script run history");
+      setHistoryError(
+        err?.message ?? "Failed to load script run history"
+      );
     } finally {
       setLoadingHistory(false);
     }
@@ -96,8 +115,6 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
     void refreshHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId]);
-
-  const hasActiveRun = runId !== null && runStatus === "IN_PROGRESS";
 
   async function handleStartRun() {
     if (!selectedScriptId) return;
@@ -113,7 +130,9 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
       setCurrentNode(res.currentNode);
       setRunStatus("IN_PROGRESS");
     } catch (err: any) {
-      setRunError(err?.message ?? "Failed to start scripted call");
+      setRunError(
+        err?.message ?? "Failed to start scripted call"
+      );
     } finally {
       setStartingRun(false);
       void refreshHistory();
@@ -129,14 +148,18 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
       setRunStatus(res.status);
       setCurrentNode(res.currentNode);
     } catch (err: any) {
-      setRunError(err?.message ?? "Failed to advance script");
+      setRunError(
+        err?.message ?? "Failed to advance script"
+      );
     } finally {
       setStepping(false);
       void refreshHistory();
     }
   }
 
-  async function handleEndRun(status: ScriptRunStatus = "ABANDONED") {
+  async function handleEndRun(
+    status: ScriptRunStatus = "ABANDONED"
+  ) {
     if (!runId) return;
     setEndingRun(true);
     setRunError(null);
@@ -144,7 +167,9 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
       await endCallScriptRun({ runId, status });
       setRunStatus(status);
     } catch (err: any) {
-      setRunError(err?.message ?? "Failed to end scripted call");
+      setRunError(
+        err?.message ?? "Failed to end scripted call"
+      );
     } finally {
       setEndingRun(false);
       void refreshHistory();
@@ -207,7 +232,9 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
               Choose an active call script to guide this conversation.
             </span>
           </div>
-          {hasActiveRun && <Badge variant="info">Script in progress</Badge>}
+          {hasActiveRun && (
+            <Badge variant="secondary">Script in progress</Badge>
+          )}
         </div>
 
         {scriptsError && (
@@ -238,6 +265,7 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
             }}
           >
             No active call scripts are configured for this environment.
+            Configure scripts in the Admin &gt; Scripts tab.
           </div>
         ) : (
           <div
@@ -249,13 +277,16 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
           >
             <select
               value={selectedScriptId}
-              onChange={(e) => setSelectedScriptId(e.target.value)}
+              onChange={(e) =>
+                setSelectedScriptId(e.target.value)
+              }
               disabled={hasActiveRun || startingRun}
               style={{
                 flex: 1,
                 padding: "var(--space-2) var(--space-3)",
                 borderRadius: "var(--radius-md)",
-                border: "1px solid var(--color-border-subtle)",
+                border:
+                  "1px solid var(--color-border-subtle)",
                 backgroundColor: "var(--color-bg-subtle)",
                 color: "var(--color-text-primary)",
                 fontSize: "var(--text-sm)",
@@ -344,7 +375,9 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                 }}
               >
                 Purpose:{" "}
-                <span style={{ fontWeight: 500 }}>{currentScript.purpose}</span>
+                <span style={{ fontWeight: 500 }}>
+                  {currentScript.purpose}
+                </span>
               </span>
             </div>
             <Badge
@@ -353,7 +386,7 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                   ? "success"
                   : runStatus === "ABANDONED"
                   ? "warning"
-                  : "info"
+                  : "secondary"
               }
             >
               {runStatus ?? "IN_PROGRESS"}
@@ -373,7 +406,8 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                   padding: "var(--space-3)",
                   borderRadius: "var(--radius-md)",
                   backgroundColor: "rgba(15,23,42,0.6)",
-                  border: "1px solid var(--color-border-subtle)",
+                  border:
+                    "1px solid var(--color-border-subtle)",
                 }}
               >
                 <div
@@ -450,8 +484,8 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                 color: "var(--color-text-soft)",
               }}
             >
-              This script has no starting node configured. Please contact an
-              admin to fix the script definition.
+              This script has no starting node configured. Please
+              contact an admin to fix the script definition.
             </div>
           )}
 
@@ -470,11 +504,17 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                 }}
               >
                 Script run is{" "}
-                <span style={{ fontWeight: 500 }}>{runStatus}</span>. You can
-                start a new scripted call if needed.
+                <span style={{ fontWeight: 500 }}>
+                  {runStatus}
+                </span>
+                . You can start a new scripted call if needed.
               </div>
               <div>
-                <Button size="sm" variant="secondary" onClick={handleResetRunState}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleResetRunState}
+                >
                   Start a new run
                 </Button>
               </div>
@@ -544,7 +584,8 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                   alignItems: "center",
                   gap: "var(--space-2)",
                   padding: "0.35rem 0",
-                  borderBottom: "1px solid rgba(15,23,42,0.5)",
+                  borderBottom:
+                    "1px solid rgba(15,23,42,0.5)",
                 }}
               >
                 <div
@@ -569,7 +610,9 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                     }}
                   >
                     {run.purpose} •{" "}
-                    {new Date(run.startedAt).toLocaleString()}
+                    {new Date(
+                      run.startedAt
+                    ).toLocaleString()}
                   </span>
                 </div>
                 <Badge
@@ -578,7 +621,7 @@ export const CallScriptPanel: React.FC<CallScriptPanelProps> = ({ leadId }) => {
                       ? "success"
                       : run.status === "ABANDONED"
                       ? "warning"
-                      : "info"
+                      : "secondary"
                   }
                 >
                   {run.status}

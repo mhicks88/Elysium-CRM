@@ -46,27 +46,43 @@ interface FilterParams {
   organizationId: string;
   from?: Date;
   to?: Date;
+  /**
+   * Optional list of userIds whose checks should be included.
+   * If omitted, all users in the org are considered.
+   */
+  userIds?: string[];
 }
 
 /**
- * Apply organization + date filters to all compliance checks.
+ * Apply organization + date (+ userIds) filters to all compliance checks.
  */
 async function getFilteredChecks(
   params: FilterParams
 ): Promise<ComplianceCheckRecord[]> {
-  const { organizationId, from, to } = params;
+  const { organizationId, from, to, userIds } = params;
   const all = await listAllComplianceChecks();
+
+  const allowedUserIdSet =
+    userIds && userIds.length > 0 ? new Set(userIds) : null;
 
   return all.filter((c) => {
     if (c.organizationId !== organizationId) return false;
     if (from && c.createdAt < from) return false;
     if (to && c.createdAt > to) return false;
+
+    if (allowedUserIdSet) {
+      // If we are scoping by user IDs, only include checks
+      // where userId is in the allowed set.
+      if (!c.userId) return false;
+      if (!allowedUserIdSet.has(c.userId)) return false;
+    }
+
     return true;
   });
 }
 
 /**
- * Compute global compliance summary from filtered checks.
+ * Compute compliance summary from filtered checks.
  */
 export async function getComplianceSummary(
   params: FilterParams
@@ -117,7 +133,7 @@ export async function getComplianceSummary(
 }
 
 /**
- * Aggregate checks by user (agent), filtered by org and dates.
+ * Aggregate checks by user (agent), filtered by org, dates, and optional userIds.
  * Shape matches apiClient.getComplianceStatsByAgent response:
  * { agents: [{ userId, total, pass, fail }] }
  */
@@ -144,7 +160,7 @@ export async function getComplianceStatsByAgent(
 }
 
 /**
- * Most recent failed checks, filtered by org + dates.
+ * Most recent failed checks, filtered by org + dates + optional userIds.
  * Shape matches apiClient.getRecentComplianceFailures response:
  * { failures: [{ id, leadId, userId, purpose, status, result, createdAt }] }
  */

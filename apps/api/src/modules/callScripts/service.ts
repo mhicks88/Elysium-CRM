@@ -4,8 +4,8 @@
 // Handles reading scripts, starting runs, stepping through nodes,
 // and ending runs. DB access is via Prisma.
 //
-// This is Phase 0: just enough to drive an interactive script UI
-// on the Lead Detail page and an admin list/import later.
+// Phase 0: just enough to drive an interactive script UI
+// on the Lead Detail page and an admin list/inspection.
 
 import { prisma } from "../../db/client";
 
@@ -200,7 +200,9 @@ export async function startScriptRun(params: {
   // Ensure script belongs to org
   const script = await getScriptById({ organizationId, scriptId });
   if (!script || !script.isActive) {
-    throw new Error("Script not found or inactive for this organization.");
+    throw new Error(
+      "Script not found or inactive for this organization."
+    );
   }
 
   if (!script.entryNodeId) {
@@ -219,7 +221,9 @@ export async function startScriptRun(params: {
   });
 
   const currentNode =
-    script.nodes.find((n: ScriptNodeDTO) => n.id === script.entryNodeId) ?? null;
+    script.nodes.find(
+      (n: ScriptNodeDTO) => n.id === script.entryNodeId
+    ) ?? null;
 
   return {
     runId: run.id,
@@ -245,7 +249,13 @@ export async function stepScriptRun(params: {
 
   const run = await prisma.callScriptRun.findUnique({
     where: { id: runId },
-    include: { script: { include: { nodes: { include: { options: true } } } } },
+    include: {
+      script: {
+        include: {
+          nodes: { include: { options: true } },
+        },
+      },
+    },
   });
 
   if (!run) {
@@ -253,22 +263,32 @@ export async function stepScriptRun(params: {
   }
 
   if (run.status !== "IN_PROGRESS") {
-    throw new Error("Cannot step a script run that is not IN_PROGRESS.");
+    throw new Error(
+      "Cannot step a script run that is not IN_PROGRESS."
+    );
   }
 
   // Find the node/option in the script definition
   const allNodes = run.script.nodes;
   const optionNode = allNodes
     .flatMap((n: any) =>
-      n.options.map((o: any) => ({ node: n as any, option: o as any }))
+      n.options.map((o: any) => ({
+        node: n as any,
+        option: o as any,
+      }))
     )
-    .find(({ option }: { option: any }) => option.id === optionId);
+    .find(
+      ({ option }: { option: any }) => option.id === optionId
+    );
 
   if (!optionNode) {
     throw new Error("Option not found in script.");
   }
 
-  const { node, option } = optionNode as { node: any; option: any };
+  const { node, option } = optionNode as {
+    node: any;
+    option: any;
+  };
 
   // Record the step
   await prisma.callScriptRunStep.create({
@@ -282,11 +302,14 @@ export async function stepScriptRun(params: {
   // Determine the next node
   const nextNode =
     option.nextNodeId != null
-      ? (allNodes.find((n: any) => n.id === option.nextNodeId) ?? null)
+      ? (allNodes.find(
+          (n: any) => n.id === option.nextNodeId
+        ) ?? null)
       : null;
 
   // If there's no next node or it's terminal, mark as completed
-  let newStatus: ScriptRunStatus = run.status as ScriptRunStatus;
+  let newStatus: ScriptRunStatus =
+    run.status as ScriptRunStatus;
 
   if (!nextNode || nextNode.isTerminal) {
     newStatus = "COMPLETED";

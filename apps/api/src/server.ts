@@ -1,6 +1,11 @@
 // apps/api/src/server.ts
 import http from "http";
-import express, { Application, Request, Response, NextFunction } from "express";
+import express, {
+  Application,
+  Request,
+  Response,
+  NextFunction,
+} from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 
@@ -20,6 +25,8 @@ import { usersRouter } from "./modules/users/routes";
 import { callsRouter } from "./modules/calls/routes";
 import { notesRouter } from "./modules/notes/routes";
 import { workRouter } from "./modules/work/routes";
+import { activityReportsRouter } from "./modules/activityReports/routes";
+import { scriptReportsRouter } from "./modules/scriptReports/routes";
 
 /**
  * Build and configure the Express app instance.
@@ -65,6 +72,12 @@ export function createApp(): Application {
   // Compliance admin analytics routes
   app.use("/api/compliance/admin", complianceAdminRouter);
 
+  // Activity reports (team-level calls/leads/tasks)
+  app.use("/api/reports/activity", activityReportsRouter);
+
+  // Script usage reports
+  app.use("/api/reports/scripts", scriptReportsRouter);
+
   // Audit routes
   app.use("/api/audit", auditRouter);
 
@@ -85,13 +98,15 @@ export function createApp(): Application {
   app.use("/api/users", usersRouter);
 
   // 404 handler for unknown API routes
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith("/api/")) {
-      res.status(404).json({ error: "Not found" });
-      return;
+  app.use(
+    (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith("/api/")) {
+        res.status(404).json({ error: "Not found" });
+        return;
+      }
+      next();
     }
-    next();
-  });
+  );
 
   // Generic error handler
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -99,7 +114,8 @@ export function createApp(): Application {
     (err: any, _req: Request, res: Response, _next: NextFunction) => {
       console.error("API error:", err);
       const status = err?.status ?? 500;
-      const message = err?.message ?? "Internal server error";
+      const message =
+        err?.message ?? "Internal server error";
       res.status(status).json({ error: message });
     }
   );

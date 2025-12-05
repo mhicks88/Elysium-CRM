@@ -41,6 +41,21 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     { label: "Tasks", path: "/tasks" },
   ];
 
+  const reportsNav: Array<{ label: string; path: string }> = [];
+
+  // Expose compliance reports to COMPLIANCE, ADMIN, MANAGER, DIRECTOR
+  if (
+    userRole === "COMPLIANCE" ||
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "DIRECTOR"
+  ) {
+    reportsNav.push({
+      label: "Reports",
+      path: "/reports/compliance",
+    });
+  }
+
   const adminExtras: Array<{ label: string; path: string }> = isAdminLike
     ? [
         { label: "Coaching", path: "/calls/coaching" },
@@ -48,7 +63,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       ]
     : [];
 
-  const navItems = [...baseNav, ...adminExtras];
+  const navItems = [...baseNav, ...reportsNav, ...adminExtras];
 
   return (
     <div

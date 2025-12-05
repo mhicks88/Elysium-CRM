@@ -743,3 +743,114 @@ export async function getDashboard(): Promise<DashboardResponse> {
   });
 }
 
+// -----------------------------------------------------------------------------
+// USERS ADMIN
+// -----------------------------------------------------------------------------
+
+export type AdminUserDto = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: "ADMIN" | "MANAGER" | "DIRECTOR" | "AGENT" | "COMPLIANCE" | "READ_ONLY";
+  isActive: boolean;
+  managerId: string | null;
+  directorId: string | null;
+};
+
+export async function getUsersAdmin(): Promise<{
+  users: AdminUserDto[];
+}> {
+  return apiFetch<{ users: AdminUserDto[] }>("/api/users", {
+    method: "GET",
+  });
+}
+
+export async function updateUserAdmin(
+  userId: string,
+  payload: Partial<{
+    role: AdminUserDto["role"];
+    managerId: string | null;
+    directorId: string | null;
+    isActive: boolean;
+  }>
+): Promise<AdminUserDto> {
+  return apiFetch<AdminUserDto>(
+    `/api/users/${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEAM ACTIVITY REPORTS
+// -----------------------------------------------------------------------------
+
+export type TeamActivityReport = {
+  calls: {
+    total: number;
+    byStatus: { status: string; count: number }[];
+    byPurpose: { purpose: string; count: number }[];
+    byAgent: { agentId: string; callCount: number }[];
+  };
+  leads: {
+    byStatus: { status: string; count: number }[];
+  };
+  tasks: {
+    open: number;
+    completed: number;
+    cancelled: number;
+    overdueOpen: number;
+  };
+};
+
+export async function getTeamActivityReport(params?: {
+  from?: string;
+  to?: string;
+}): Promise<TeamActivityReport> {
+  const search = new URLSearchParams();
+  if (params?.from) search.set("from", params.from);
+  if (params?.to) search.set("to", params.to);
+  const qs = search.toString();
+  const url = qs
+    ? `/api/reports/activity?${qs}`
+    : `/api/reports/activity`;
+
+  return apiFetch<TeamActivityReport>(url, { method: "GET" });
+}
+
+// -----------------------------------------------------------------------------
+// SCRIPT USAGE REPORTS
+// -----------------------------------------------------------------------------
+
+export type ScriptUsageRow = {
+  scriptId: string;
+  scriptName: string;
+  purpose: string;
+  isActive: boolean;
+  runCount: number;
+  completedCount: number;
+  abandonedCount: number;
+  completionRate: number;
+  lastRunAt: string | null;
+};
+
+export async function getScriptUsageReport(params?: {
+  from?: string;
+  to?: string;
+}): Promise<{ scripts: ScriptUsageRow[] }> {
+  const search = new URLSearchParams();
+  if (params?.from) search.set("from", params.from);
+  if (params?.to) search.set("to", params.to);
+  const qs = search.toString();
+  const url = qs
+    ? `/api/reports/scripts/usage?${qs}`
+    : `/api/reports/scripts/usage`;
+
+  return apiFetch<{ scripts: ScriptUsageRow[] }>(url, {
+    method: "GET",
+  });
+}
+

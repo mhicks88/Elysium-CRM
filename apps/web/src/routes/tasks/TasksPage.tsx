@@ -13,8 +13,17 @@ import {
   type TaskDto,
   type ApiTaskStatus,
 } from "../../lib/apiClient";
+import { useAuth } from "../../lib/auth";
 
 type TaskFilterStatus = ApiTaskStatus | "ALL";
+
+type Role =
+  | "ADMIN"
+  | "AGENT"
+  | "VIEW_ONLY"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "COMPLIANCE_OFFICER";
 
 const statusLabel: Record<ApiTaskStatus, string> = {
   OPEN: "Open",
@@ -46,6 +55,15 @@ function formatDate(value: string | null): string {
 }
 
 const TasksPage: React.FC = () => {
+  const { user } = useAuth() as { user: any | null };
+  const userRole = (user?.role ?? null) as Role | null;
+
+  // Backend lets only ADMIN / MANAGER / AGENT mutate tasks.
+  const canWriteTasks =
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "AGENT";
+
   const [tasks, setTasks] = useState<TaskDto[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +135,8 @@ const TasksPage: React.FC = () => {
     task: TaskDto,
     nextStatus: ApiTaskStatus
   ) {
+    if (!canWriteTasks) return;
+
     setUpdatingId(task.id);
     setError(null);
     try {
@@ -440,6 +460,8 @@ const TasksPage: React.FC = () => {
                       task.status !== "DONE" &&
                       task.status !== "CANCELLED";
 
+                    const showActions = canWriteTasks;
+
                     return (
                       <tr
                         key={task.id}
@@ -536,7 +558,7 @@ const TasksPage: React.FC = () => {
                               justifyContent: "flex-end",
                             }}
                           >
-                            {task.status !== "OPEN" && (
+                            {showActions && task.status !== "OPEN" && (
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -551,35 +573,37 @@ const TasksPage: React.FC = () => {
                                 Reopen
                               </Button>
                             )}
-                            {task.status === "OPEN" && (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                disabled={updatingId === task.id}
-                                onClick={() =>
-                                  void handleQuickStatusChange(
-                                    task,
-                                    "IN_PROGRESS"
-                                  )
-                                }
-                              >
-                                Start
-                              </Button>
-                            )}
-                            {task.status !== "DONE" && (
-                              <Button
-                                size="sm"
-                                disabled={updatingId === task.id}
-                                onClick={() =>
-                                  void handleQuickStatusChange(
-                                    task,
-                                    "DONE"
-                                  )
-                                }
-                              >
-                                Complete
-                              </Button>
-                            )}
+                            {showActions &&
+                              task.status === "OPEN" && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled={updatingId === task.id}
+                                  onClick={() =>
+                                    void handleQuickStatusChange(
+                                      task,
+                                      "IN_PROGRESS"
+                                    )
+                                  }
+                                >
+                                  Start
+                                </Button>
+                              )}
+                            {showActions &&
+                              task.status !== "DONE" && (
+                                <Button
+                                  size="sm"
+                                  disabled={updatingId === task.id}
+                                  onClick={() =>
+                                    void handleQuickStatusChange(
+                                      task,
+                                      "DONE"
+                                    )
+                                  }
+                                >
+                                  Complete
+                                </Button>
+                              )}
                           </div>
                         </td>
                       </tr>

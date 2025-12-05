@@ -19,6 +19,7 @@ import DashboardPage from "./routes/dashboard/Dashboard";
 import CallDetailPage from "./routes/calls/CallDetail";
 import CoachingQueuePage from "./routes/calls/CoachingQueue";
 import TasksPage from "./routes/tasks/TasksPage";
+import ComplianceReportsPage from "./routes/ComplianceReportsPage";
 
 // Simple guard: requires any authenticated user
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -123,6 +124,16 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <TasksPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Compliance reports */}
+      <Route
+        path="/reports/compliance"
+        element={
+          <RequireAuth>
+            <ComplianceReportsPage />
           </RequireAuth>
         }
       />

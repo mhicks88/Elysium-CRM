@@ -14,6 +14,7 @@ import {
   getComplianceSummary,
   getRecentFailures,
 } from "./service";
+import { getVisibleUserIdsForUser } from "../auth/visibility";
 
 export const complianceAdminRouter = Router();
 
@@ -40,6 +41,13 @@ function parseDateParam(value: unknown): Date | undefined {
  *   firstCheckAt: string | null,
  *   lastCheckAt: string | null
  * }
+ *
+ * Visibility:
+ *  - ADMIN / COMPLIANCE_OFFICER: org-wide
+ *  - MANAGER: only checks for the manager + their agents
+ *
+ * (DIRECTOR can be added at the auth layer later once Roles.DIRECTOR exists;
+ * the visibility helper already knows how to scope directors.)
  */
 complianceAdminRouter.get(
   "/summary",
@@ -50,10 +58,16 @@ complianceAdminRouter.get(
     const from = parseDateParam(req.query.from);
     const to = parseDateParam(req.query.to);
 
+    const userIds = await getVisibleUserIdsForUser({
+      id: user.id,
+      role: user.role as any,
+    });
+
     const summary = await getComplianceSummary({
       organizationId: user.organizationId,
       from,
       to,
+      userIds,
     });
 
     res.json({
@@ -77,6 +91,8 @@ complianceAdminRouter.get(
  *
  * Shape matches apiClient.getComplianceStatsByAgent:
  * { agents: [{ userId, total, pass, fail }] }
+ *
+ * Visibility scoped by getVisibleUserIdsForUser, same as /summary.
  */
 complianceAdminRouter.get(
   "/by-agent",
@@ -87,10 +103,16 @@ complianceAdminRouter.get(
     const from = parseDateParam(req.query.from);
     const to = parseDateParam(req.query.to);
 
+    const userIds = await getVisibleUserIdsForUser({
+      id: user.id,
+      role: user.role as any,
+    });
+
     const agents = await getComplianceStatsByAgent({
       organizationId: user.organizationId,
       from,
       to,
+      userIds,
     });
 
     res.json({
@@ -105,7 +127,7 @@ complianceAdminRouter.get(
  * Shape matches apiClient.getRecentComplianceFailures:
  * { failures: [{ id, leadId, userId, purpose, status, result, createdAt }] }
  *
- * (Currently apiClient only sends `limit`; we also support from/to for future use.)
+ * Visibility scoped by getVisibleUserIdsForUser.
  */
 complianceAdminRouter.get(
   "/recent-failures",
@@ -125,11 +147,17 @@ complianceAdminRouter.get(
       }
     }
 
+    const userIds = await getVisibleUserIdsForUser({
+      id: user.id,
+      role: user.role as any,
+    });
+
     const failures = await getRecentFailures({
       organizationId: user.organizationId,
       from,
       to,
       limit,
+      userIds,
     });
 
     res.json({

@@ -16,6 +16,15 @@ import {
   type CallCoachingNote,
   type CallDisposition,
 } from "../../lib/apiClient";
+import { useAuth } from "../../lib/auth";
+
+type Role =
+  | "ADMIN"
+  | "AGENT"
+  | "VIEW_ONLY"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "COMPLIANCE_OFFICER";
 
 function callStatusVariant(status: string): "success" | "warning" | "danger" {
   if (status === "COMPLETED" || status === "CONNECTED") return "success";
@@ -53,6 +62,25 @@ const CallDetailPage: React.FC = () => {
   const params = useParams<{ id: string }>();
   const callId = params.id ?? "";
 
+  const { user } = useAuth() as { user: any | null };
+  const userRole = (user?.role ?? null) as Role | null;
+
+  // Backend rules:
+  // - Disposition: ADMIN / MANAGER / DIRECTOR / AGENT / COMPLIANCE_OFFICER
+  // - Coaching: ADMIN / MANAGER / DIRECTOR / COMPLIANCE_OFFICER
+  const canSetDisposition =
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "DIRECTOR" ||
+    userRole === "AGENT" ||
+    userRole === "COMPLIANCE_OFFICER";
+
+  const canAddCoaching =
+    userRole === "ADMIN" ||
+    userRole === "MANAGER" ||
+    userRole === "DIRECTOR" ||
+    userRole === "COMPLIANCE_OFFICER";
+
   const [call, setCall] = useState<CallSessionDto | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,22 +92,21 @@ const CallDetailPage: React.FC = () => {
   // Disposition form state
   const [disposition, setDisposition] = useState<CallDisposition | "">("");
   const [callbackAt, setCallbackAt] = useState<string>("");
-  const [dispositionNotes, setDispositionNotes] = useState<string>("");
-  const [dispositionSaving, setDispositionSaving] = useState(false);
-  const [dispositionError, setDispositionError] = useState<string | null>(
-    null
-  );
-  const [dispositionSuccess, setDispositionSuccess] = useState<
-    string | null
-  >(null);
+  const [dispositionNotes, setDispositionNotes] =
+    useState<string>("");
+  const [dispositionSaving, setDispositionSaving] =
+    useState(false);
+  const [dispositionError, setDispositionError] =
+    useState<string | null>(null);
+  const [dispositionSuccess, setDispositionSuccess] =
+    useState<string | null>(null);
 
   // Coaching note form
   const [coachingScore, setCoachingScore] = useState<string>("");
   const [coachingBody, setCoachingBody] = useState<string>("");
   const [coachingSaving, setCoachingSaving] = useState(false);
-  const [coachingError, setCoachingError] = useState<string | null>(
-    null
-  );
+  const [coachingError, setCoachingError] =
+    useState<string | null>(null);
 
   useEffect(() => {
     if (!callId) return;
@@ -128,7 +155,7 @@ const CallDetailPage: React.FC = () => {
 
   async function handleSaveDisposition(e: React.FormEvent) {
     e.preventDefault();
-    if (!callId || !disposition) return;
+    if (!callId || !disposition || !canSetDisposition) return;
 
     setDispositionSaving(true);
     setDispositionError(null);
@@ -166,7 +193,7 @@ const CallDetailPage: React.FC = () => {
 
   async function handleAddCoachingNote(e: React.FormEvent) {
     e.preventDefault();
-    if (!callId || !coachingBody.trim()) return;
+    if (!callId || !coachingBody.trim() || !canAddCoaching) return;
 
     setCoachingSaving(true);
     setCoachingError(null);
@@ -423,7 +450,11 @@ const CallDetailPage: React.FC = () => {
               >
                 <Card
                   title="Disposition"
-                  description="Record the outcome of this call and create follow-up when needed."
+                  description={
+                    canSetDisposition
+                      ? "Record the outcome of this call and create follow-up when needed."
+                      : "View the call disposition details. Your role cannot modify dispositions."
+                  }
                 >
                   <form
                     onSubmit={handleSaveDisposition}
@@ -451,14 +482,19 @@ const CallDetailPage: React.FC = () => {
                       <select
                         value={disposition}
                         onChange={(e) =>
-                          setDisposition(e.target.value as CallDisposition | "")
+                          setDisposition(
+                            e.target.value as CallDisposition | ""
+                          )
                         }
+                        disabled={!canSetDisposition}
                         style={{
                           fontSize: "var(--text-xs)",
                           padding: "0.35rem 0.5rem",
                           borderRadius: "var(--radius-sm)",
                           border: "1px solid var(--color-border-subtle)",
-                          backgroundColor: "var(--color-bg-subtle)",
+                          backgroundColor: canSetDisposition
+                            ? "var(--color-bg-subtle)"
+                            : "rgba(15,23,42,0.5)",
                           color: "var(--color-text-primary)",
                         }}
                       >
@@ -490,12 +526,15 @@ const CallDetailPage: React.FC = () => {
                         type="datetime-local"
                         value={callbackAt}
                         onChange={(e) => setCallbackAt(e.target.value)}
+                        disabled={!canSetDisposition}
                         style={{
                           fontSize: "var(--text-xs)",
                           padding: "0.35rem 0.5rem",
                           borderRadius: "var(--radius-sm)",
                           border: "1px solid var(--color-border-subtle)",
-                          backgroundColor: "var(--color-bg-subtle)",
+                          backgroundColor: canSetDisposition
+                            ? "var(--color-bg-subtle)"
+                            : "rgba(15,23,42,0.5)",
                           color: "var(--color-text-primary)",
                         }}
                       />
@@ -527,15 +566,20 @@ const CallDetailPage: React.FC = () => {
                       </label>
                       <textarea
                         value={dispositionNotes}
-                        onChange={(e) => setDispositionNotes(e.target.value)}
+                        onChange={(e) =>
+                          setDispositionNotes(e.target.value)
+                        }
                         rows={3}
+                        disabled={!canSetDisposition}
                         style={{
                           resize: "vertical",
                           fontSize: "var(--text-xs)",
                           padding: "0.45rem 0.6rem",
                           borderRadius: "var(--radius-sm)",
                           border: "1px solid var(--color-border-subtle)",
-                          backgroundColor: "var(--color-bg-subtle)",
+                          backgroundColor: canSetDisposition
+                            ? "var(--color-bg-subtle)"
+                            : "rgba(15,23,42,0.5)",
                           color: "var(--color-text-primary)",
                         }}
                       />
@@ -573,7 +617,11 @@ const CallDetailPage: React.FC = () => {
                         type="submit"
                         size="sm"
                         isLoading={dispositionSaving}
-                        disabled={dispositionSaving || !disposition}
+                        disabled={
+                          dispositionSaving ||
+                          !disposition ||
+                          !canSetDisposition
+                        }
                       >
                         Save disposition
                       </Button>
@@ -583,7 +631,11 @@ const CallDetailPage: React.FC = () => {
 
                 <Card
                   title="Coaching notes"
-                  description="Quality and training notes attached to this call."
+                  description={
+                    canAddCoaching
+                      ? "Quality and training notes attached to this call."
+                      : "Review coaching notes attached to this call. Your role cannot add coaching notes."
+                  }
                 >
                   <form
                     onSubmit={handleAddCoachingNote}
@@ -597,7 +649,8 @@ const CallDetailPage: React.FC = () => {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "minmax(0, 0.5fr) minmax(0, 1.5fr)",
+                        gridTemplateColumns:
+                          "minmax(0, 0.5fr) minmax(0, 1.5fr)",
                         gap: "var(--space-3)",
                         alignItems: "flex-start",
                       }}
@@ -622,14 +675,19 @@ const CallDetailPage: React.FC = () => {
                           min={0}
                           max={100}
                           value={coachingScore}
-                          onChange={(e) => setCoachingScore(e.target.value)}
+                          onChange={(e) =>
+                            setCoachingScore(e.target.value)
+                          }
+                          disabled={!canAddCoaching}
                           style={{
                             fontSize: "var(--text-xs)",
                             padding: "0.35rem 0.5rem",
                             borderRadius: "var(--radius-sm)",
                             border:
                               "1px solid var(--color-border-subtle)",
-                            backgroundColor: "var(--color-bg-subtle)",
+                            backgroundColor: canAddCoaching
+                              ? "var(--color-bg-subtle)"
+                              : "rgba(15,23,42,0.5)",
                             color: "var(--color-text-primary)",
                           }}
                         />
@@ -656,6 +714,7 @@ const CallDetailPage: React.FC = () => {
                             setCoachingBody(e.target.value)
                           }
                           rows={3}
+                          disabled={!canAddCoaching}
                           style={{
                             resize: "vertical",
                             fontSize: "var(--text-xs)",
@@ -663,7 +722,9 @@ const CallDetailPage: React.FC = () => {
                             borderRadius: "var(--radius-sm)",
                             border:
                               "1px solid var(--color-border-subtle)",
-                            backgroundColor: "var(--color-bg-subtle)",
+                            backgroundColor: canAddCoaching
+                              ? "var(--color-bg-subtle)"
+                              : "rgba(15,23,42,0.5)",
                             color: "var(--color-text-primary)",
                           }}
                         />
@@ -691,7 +752,11 @@ const CallDetailPage: React.FC = () => {
                         type="submit"
                         size="sm"
                         isLoading={coachingSaving}
-                        disabled={coachingSaving || !coachingBody.trim()}
+                        disabled={
+                          coachingSaving ||
+                          !coachingBody.trim() ||
+                          !canAddCoaching
+                        }
                       >
                         Add coaching note
                       </Button>
