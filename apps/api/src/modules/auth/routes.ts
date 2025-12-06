@@ -86,6 +86,127 @@ async function findUserById(userId: string): Promise<User | null> {
   return user;
 }
 
+// POST /api/auth/signup-org
+//
+// Create a new organization and its initial ADMIN user, then log them in.
+// Body:
+// {
+//   organizationName: string;
+//   firstName: string;
+//   lastName: string;
+//   email: string;
+//   password: string;
+// }
+authRouter.post(
+  "/signup-org",
+  async (req: Request, res: Response) => {
+    const {
+      organizationName,
+      firstName,
+      lastName,
+      email,
+      password,
+    } = req.body ?? {};
+
+    if (
+      !organizationName ||
+      !firstName ||
+      !lastName ||
+      !email ||
+      !password
+    ) {
+      return res.status(400).json({
+        error:
+          "organizationName, firstName, lastName, email, and password are required",
+      });
+    }
+
+    const trimmedEmail = String(email).trim().toLowerCase();
+    const trimmedOrgName = String(organizationName).trim();
+    const trimmedFirstName = String(firstName).trim();
+    const trimmedLastName = String(lastName).trim();
+
+    if (!trimmedOrgName) {
+      return res.status(400).json({ error: "organizationName is required" });
+    }
+
+    if (!trimmedFirstName || !trimmedLastName) {
+      return res
+        .status(400)
+        .json({ error: "firstName and lastName are required" });
+    }
+
+    // Basic sanity check on password length (you can tighten this later)
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        error: "password must be at least 8 characters long",
+      });
+    }
+
+    // Ensure email is not already used
+    const existingUser = await prisma.user.findUnique({
+      where: { email: trimmedEmail },
+    });
+
+    if (existingUser) {
+      return res
+        .status(409)
+        .json({ error: "A user with that email already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(String(password), 10);
+
+    // Create org + admin user in a single transaction
+    const [organization, adminUser] = await prisma.$transaction([
+      prisma.organization.create({
+        data: {
+          name: trimmedOrgName,
+          settings: {}, // start with empty JSON settings; can be customized later
+        },
+      }),
+      // We'll create the user after we know org id, but inside the same tx
+    ]).then(async ([org]) => {
+      const user = await prisma.user.create({
+        data: {
+          organizationId: org.id,
+          firstName: trimmedFirstName,
+          lastName: trimmedLastName,
+          email: trimmedEmail,
+          passwordHash,
+          role: UserRole.ADMIN,
+          isActive: true,
+        },
+      });
+
+      return [org, user] as const;
+    });
+
+    const authRole = mapDbRoleToAuthRole(adminUser.role);
+
+    const user: User = {
+      id: adminUser.id,
+      email: adminUser.email,
+      role: authRole,
+      organizationId: organization.id,
+    };
+
+    const accessToken = signAccessToken(user);
+    const session = createSessionForUser(user, req);
+
+    setRefreshCookie(res, session.token);
+
+    return res.status(201).json({
+      accessToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        organizationId: user.organizationId,
+      },
+    });
+  }
+);
+
 // POST /api/auth/login
 authRouter.post("/login", async (req: Request, res: Response) => {
   const { email, password } = req.body ?? {};

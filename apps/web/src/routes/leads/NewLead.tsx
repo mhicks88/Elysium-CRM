@@ -1,51 +1,14 @@
 // apps/web/src/routes/leads/NewLead.tsx
+
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { AppShell } from "../../components/layout/AppShell";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
+import { createLead } from "../../lib/apiClient";
 
 type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
-
-interface CreateLeadPayload {
-  firstName: string;
-  lastName: string;
-  email?: string | null;
-  phone?: string | null;
-  state?: string | null;
-  status?: LeadStatus;
-}
-
-/**
- * Local helper to create a lead via the API.
- * We keep apiClient.ts untouched and just POST directly.
- */
-async function createLead(payload: CreateLeadPayload) {
-  const res = await fetch("/api/leads", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!res.ok) {
-    let message = `Failed to create lead (status ${res.status})`;
-    try {
-      const body = await res.json();
-      if (body?.error) message = body.error;
-    } catch {
-      // ignore
-    }
-    throw new Error(message);
-  }
-
-  const data = await res.json();
-  return data as { id: string };
-}
 
 const NewLeadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -55,12 +18,18 @@ const NewLeadPage: React.FC = () => {
   const [email, setEmail] = useState<string>("");
   const [phone, setPhone] = useState<string>("");
   const [state, setState] = useState<string>("");
+  const [zip, setZip] = useState<string>("");
+  const [dob, setDob] = useState<string>(""); // YYYY-MM-DD from <input type="date">
+  const [permissionToContactPhone, setPermissionToContactPhone] =
+    useState<boolean>(false);
 
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const canSubmit =
-    firstName.trim().length > 0 && lastName.trim().length > 0;
+    firstName.trim().length > 0 &&
+    lastName.trim().length > 0 &&
+    phone.trim().length > 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,19 +39,24 @@ const NewLeadPage: React.FC = () => {
     setError(null);
 
     try {
-      const payload: CreateLeadPayload = {
+      const payload: Record<string, unknown> = {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
+        phone: phone.trim(),
         email: email.trim() || null,
-        phone: phone.trim() || null,
         state: state.trim() || null,
-        status: "NEW",
+        zip: zip.trim() || null,
+        permissionToContactPhone,
+        doNotContact: false,
+        status: "NEW" as LeadStatus,
+        // Send raw YYYY-MM-DD string; backend will parse or fall back.
+        dateOfBirth: dob.trim() || null,
       };
 
       const created = await createLead(payload);
 
       // Navigate to the new lead's detail page
-      if (created?.id) {
+      if (created && typeof created.id === "string") {
         navigate(`/leads/${created.id}`);
       } else {
         navigate("/leads");
@@ -142,15 +116,16 @@ const NewLeadPage: React.FC = () => {
                 maxWidth: "40rem",
               }}
             >
-              Capture a new lead with just the minimum information required to
-              start a compliant outreach workflow.
+              Capture a new lead with the minimum information required to
+              start a compliant outreach workflow. First name, last name,
+              and phone are required.
             </p>
           </div>
         </div>
 
         <Card
           title="Lead details"
-          description="You can always enrich this record later. First and last name are required."
+          description="You can always enrich this record later. Phone is required so we can tie calls and compliance checks correctly."
         >
           {error && (
             <div
@@ -201,6 +176,7 @@ const NewLeadPage: React.FC = () => {
               />
               <Input
                 label="Phone"
+                requiredLabel
                 placeholder="+1 (555) 555-1234"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -211,6 +187,48 @@ const NewLeadPage: React.FC = () => {
                 value={state}
                 onChange={(e) => setState(e.target.value)}
               />
+              <Input
+                label="ZIP"
+                placeholder="94105"
+                value={zip}
+                onChange={(e) => setZip(e.target.value)}
+              />
+              <Input
+                label="Date of birth"
+                placeholder="YYYY-MM-DD"
+                value={dob}
+                onChange={(e) => setDob(e.target.value)}
+                // assuming Input passes type through to underlying input
+                type="date"
+              />
+            </div>
+
+            {/* Permission to contact */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginTop: "var(--space-2)",
+              }}
+            >
+              <input
+                id="permissionToContactPhone"
+                type="checkbox"
+                checked={permissionToContactPhone}
+                onChange={(e) =>
+                  setPermissionToContactPhone(e.target.checked)
+                }
+              />
+              <label
+                htmlFor="permissionToContactPhone"
+                style={{
+                  fontSize: "var(--text-sm)",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                I have captured permission to contact this lead by phone.
+              </label>
             </div>
 
             <div
@@ -218,6 +236,7 @@ const NewLeadPage: React.FC = () => {
                 display: "flex",
                 justifyContent: "flex-end",
                 gap: "var(--space-3)",
+                marginTop: "var(--space-4)",
               }}
             >
               <Button

@@ -7,8 +7,8 @@
 //  - MANAGER
 //  - DIRECTOR
 //  - AGENT
-//  - COMPLIANCE_OFFICER (mapped from DB role COMPLIANCE)
-//  - VIEW_ONLY        (mapped from DB role READ_ONLY)
+//  - COMPLIANCE_OFFICER
+//  - VIEW_ONLY
 //
 // Visibility:
 //  - ADMIN / COMPLIANCE_OFFICER / VIEW_ONLY: org-wide leads
@@ -32,57 +32,45 @@ import {
 import multer from "multer";
 import {
   requireAuth,
+  requireRole,
   type AuthenticatedRequest,
+  Roles,
 } from "../../middleware/auth";
 import { prisma } from "../../db/client";
 import { recordAuditEvent } from "../audit/service";
-import { importLeadsFromCsv } from "./service";
+import {
+  importLeadsFromCsv,
+  createLead as createLeadService,
+} from "./service";
+import type { CreateLeadRequestDto } from "@elysium-crm/shared-types";
 
 export const leadsRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Canonical API role names we expect on req.user.role
-type ApiRole =
-  | "ADMIN"
-  | "MANAGER"
-  | "DIRECTOR"
-  | "AGENT"
-  | "COMPLIANCE_OFFICER"
-  | "VIEW_ONLY";
-
-/**
- * Normalize whatever comes in as user.role into our canonical ApiRole,
- * handling both DB naming (COMPLIANCE / READ_ONLY) and API naming
- * (COMPLIANCE_OFFICER / VIEW_ONLY).
- */
-function normalizeRole(
-  raw: string | null | undefined
-): ApiRole | null {
-  if (!raw) return null;
-  const r = String(raw).toUpperCase();
-
-  if (r === "ADMIN") return "ADMIN";
-  if (r === "MANAGER") return "MANAGER";
-  if (r === "DIRECTOR") return "DIRECTOR";
-  if (r === "AGENT") return "AGENT";
-  if (r === "COMPLIANCE" || r === "COMPLIANCE_OFFICER") {
-    return "COMPLIANCE_OFFICER";
-  }
-  if (r === "READ_ONLY" || r === "VIEW_ONLY") {
-    return "VIEW_ONLY";
-  }
-
-  return null;
+function buildAssigneeDisplayName(
+  user:
+    | {
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+      }
+    | null
+    | undefined
+): string | null {
+  if (!user) return null;
+  const fullName = [user.firstName, user.lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (fullName) return fullName;
+  if (user.email) return user.email;
+  return user.id;
 }
 
 /**
  * Compute a simple lead "score" for prioritization.
- *
- * Factors (roughly):
- *  - Status (NEW/CONTACT_ATTEMPTED/CONTACTED/IN_DISCUSSION higher; ENROLLED low; DNC very negative)
- *  - Recency of createdAt (newer = higher)
- *  - Permission to contact phone (missing permission: penalty)
  */
 function computeLeadScore(lead: {
   status: string;
@@ -141,29 +129,24 @@ function computeLeadScore(lead: {
 async function getAllowedAssigneeIdsForUser(params: {
   organizationId: string;
   userId: string;
-  role: ApiRole | null;
+  role: Roles;
 }): Promise<string[] | null> {
   const { organizationId, userId, role } = params;
 
-  if (!role) {
-    // Defensive: unknown role → most restrictive (self only)
-    return [userId];
-  }
-
   // Org-wide roles: ADMIN, COMPLIANCE_OFFICER, VIEW_ONLY
   if (
-    role === "ADMIN" ||
-    role === "COMPLIANCE_OFFICER" ||
-    role === "VIEW_ONLY"
+    role === Roles.ADMIN ||
+    role === Roles.COMPLIANCE_OFFICER ||
+    role === Roles.VIEW_ONLY
   ) {
     return null;
   }
 
-  if (role === "AGENT") {
+  if (role === Roles.AGENT) {
     return [userId];
   }
 
-  if (role === "MANAGER") {
+  if (role === Roles.MANAGER) {
     const agents = await prisma.user.findMany({
       where: {
         organizationId,
@@ -174,7 +157,7 @@ async function getAllowedAssigneeIdsForUser(params: {
     return [userId, ...agents.map((a) => a.id)];
   }
 
-  if (role === "DIRECTOR") {
+  if (role === Roles.DIRECTOR) {
     // Managers under this director
     const managers = await prisma.user.findMany({
       where: {
@@ -208,11 +191,6 @@ async function getAllowedAssigneeIdsForUser(params: {
  * GET /api/leads
  *
  * List leads visible to the current user (org + role scoped).
- * Optional query params:
- *   ?search=...   (name/email/phone/state/assignee)
- *   ?status=NEW|CONTACT_ATTEMPTED|CONTACTED|SOA_REQUIRED|SOA_COMPLETED|IN_DISCUSSION|ENROLLED|NOT_INTERESTED|DO_NOT_CONTACT
- *   ?sortBy=score|createdAt|updatedAt
- *   ?sortOrder=asc|desc
  */
 leadsRouter.get(
   "/",
@@ -222,7 +200,7 @@ leadsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
 
       const { search, status } = req.query;
       const sortByParam =
@@ -289,6 +267,16 @@ leadsRouter.get(
       const leads = await prisma.lead.findMany({
         where,
         orderBy,
+        include: {
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
       });
 
       let payload = leads.map((l) => {
@@ -297,6 +285,10 @@ leadsRouter.get(
           createdAt: l.createdAt,
           permissionToContactPhone: l.permissionToContactPhone,
         });
+
+        const assignedToName = buildAssigneeDisplayName(
+          l.assignedTo ?? null
+        );
 
         return {
           id: l.id,
@@ -311,6 +303,7 @@ leadsRouter.get(
           permissionToContactPhone: l.permissionToContactPhone,
           doNotContact: l.status === "DO_NOT_CONTACT",
           assignedToUserId: l.assignedToUserId,
+          assignedToName,
           score,
         };
       });
@@ -333,13 +326,6 @@ leadsRouter.get(
 
 /**
  * GET /api/leads/next
- *
- * Pick the "next" best lead for the current user to work, based on:
- *  - org + role scoping
- *  - active statuses (NEW / CONTACT_ATTEMPTED / CONTACTED / SOA_* / IN_DISCUSSION)
- *  - computeLeadScore (status + recency + phone permission)
- *
- * Returns the same shape as GET /api/leads/:id.
  */
 leadsRouter.get(
   "/next",
@@ -349,7 +335,7 @@ leadsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
 
       const allowedAssignees = await getAllowedAssigneeIdsForUser({
         organizationId: orgId,
@@ -382,6 +368,16 @@ leadsRouter.get(
           updatedAt: "asc",
         },
         take: 200,
+        include: {
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
       });
 
       if (candidates.length === 0) {
@@ -415,6 +411,10 @@ leadsRouter.get(
         },
       });
 
+      const assignedToName = buildAssigneeDisplayName(
+        best.assignedTo ?? null
+      );
+
       res.json({
         id: best.id,
         firstName: best.firstName,
@@ -428,6 +428,7 @@ leadsRouter.get(
         permissionToContactPhone: best.permissionToContactPhone,
         doNotContact: best.status === "DO_NOT_CONTACT",
         assignedToUserId: best.assignedToUserId,
+        assignedToName,
         score: bestScore,
       });
     } catch (err) {
@@ -443,7 +444,7 @@ leadsRouter.get(
 async function getLeadVisibleToUser(params: {
   organizationId: string;
   userId: string;
-  role: ApiRole | null;
+  role: Roles;
   leadId: string;
 }) {
   const { organizationId, userId, role, leadId } = params;
@@ -465,13 +466,21 @@ async function getLeadVisibleToUser(params: {
 
   return prisma.lead.findFirst({
     where,
+    include: {
+      assignedTo: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+    },
   });
 }
 
 /**
  * GET /api/leads/:id
- *
- * Fetch a single lead, scoped by org + role.
  */
 leadsRouter.get(
   "/:id",
@@ -481,7 +490,7 @@ leadsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
       const { id } = req.params;
 
       if (!id) {
@@ -507,6 +516,10 @@ leadsRouter.get(
         permissionToContactPhone: lead.permissionToContactPhone,
       });
 
+      const assignedToName = buildAssigneeDisplayName(
+        lead.assignedTo ?? null
+      );
+
       res.json({
         id: lead.id,
         firstName: lead.firstName,
@@ -520,6 +533,7 @@ leadsRouter.get(
         permissionToContactPhone: lead.permissionToContactPhone,
         doNotContact: lead.status === "DO_NOT_CONTACT",
         assignedToUserId: lead.assignedToUserId,
+        assignedToName,
         score,
       });
     } catch (err) {
@@ -528,33 +542,33 @@ leadsRouter.get(
   }
 );
 
+// Local extension type for POST body that includes dateOfBirth
+type RawCreateLeadBody = Partial<CreateLeadRequestDto> & {
+  status?: string;
+  dateOfBirth?: string | null;
+};
+
+// Local extension matching service
+type CreateLeadWithDob = CreateLeadRequestDto & {
+  dateOfBirth?: string | null;
+};
+
 /**
  * POST /api/leads
  *
  * Create a new lead in the current org.
  * Allowed roles: ADMIN / MANAGER / DIRECTOR / AGENT
- * Read-only roles (COMPLIANCE_OFFICER / VIEW_ONLY) get 403.
+ * Read-only roles (COMPLIANCE_OFFICER / VIEW_ONLY) are blocked by requireRole.
  */
 leadsRouter.post(
   "/",
   requireAuth,
+  requireRole(Roles.ADMIN, Roles.MANAGER, Roles.DIRECTOR, Roles.AGENT),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
-
-      if (
-        !role ||
-        role === "COMPLIANCE_OFFICER" ||
-        role === "VIEW_ONLY"
-      ) {
-        res.status(403).json({
-          error: "Not authorized to create leads",
-        });
-        return;
-      }
 
       const {
         firstName,
@@ -562,8 +576,15 @@ leadsRouter.post(
         email,
         phone,
         state,
+        zip,
+        timezone,
+        notes,
+        permissionToContactPhone,
+        doNotContact,
+        assignedToId,
+        dateOfBirth,
         status,
-      } = req.body ?? {};
+      } = (req.body ?? {}) as RawCreateLeadBody;
 
       if (!firstName || !lastName || !phone) {
         res
@@ -572,45 +593,55 @@ leadsRouter.post(
         return;
       }
 
-      const created = await prisma.lead.create({
-        data: {
-          organizationId: orgId,
-          firstName: String(firstName),
-          lastName: String(lastName),
-          email: email ? String(email) : null,
-          phonePrimary: String(phone),
-          phoneAlt: null,
-          state: state ? String(state) : "UNKNOWN",
-          addressLine1: "UNKNOWN",
-          addressLine2: null,
-          city: "UNKNOWN",
-          zip: "00000",
-          timeZone: "America/New_York",
-          leadSource: "OTHER",
-          dateOfBirth: new Date("1900-01-01T00:00:00.000Z"),
-          permissionToContactPhone: false,
-          permissionToContactEmail: false,
-          permissionSource: "UNKNOWN",
-          permissionCapturedAt: null,
-          status:
-            status &&
-            [
-              "NEW",
-              "CONTACT_ATTEMPTED",
-              "CONTACTED",
-              "SOA_REQUIRED",
-              "SOA_COMPLETED",
-              "IN_DISCUSSION",
-              "ENROLLED",
-              "NOT_INTERESTED",
-              "DO_NOT_CONTACT",
-            ].includes(status)
-              ? status
-              : "NEW",
-          assignedToUserId: null,
-          notesSummary: null,
-        },
-      });
+      const payload: CreateLeadWithDob = {
+        firstName: String(firstName).trim(),
+        lastName: String(lastName).trim(),
+        phone: String(phone).trim(),
+        email:
+          email !== undefined
+            ? email
+              ? String(email).trim()
+              : null
+            : undefined,
+        state:
+          state !== undefined
+            ? state
+              ? String(state).trim()
+              : null
+            : undefined,
+        zip:
+          zip !== undefined
+            ? zip
+              ? String(zip).trim()
+              : null
+            : undefined,
+        timezone:
+          timezone !== undefined && timezone !== null
+            ? String(timezone).trim()
+            : undefined,
+        notes:
+          notes !== undefined && notes !== null
+            ? String(notes).trim()
+            : undefined,
+        permissionToContactPhone:
+          typeof permissionToContactPhone === "boolean"
+            ? permissionToContactPhone
+            : undefined,
+        doNotContact:
+          doNotContact === true || status === "DO_NOT_CONTACT"
+            ? true
+            : undefined,
+        assignedToId:
+          assignedToId && String(assignedToId).trim().length > 0
+            ? String(assignedToId).trim()
+            : undefined,
+        dateOfBirth:
+          dateOfBirth !== undefined && dateOfBirth !== null
+            ? String(dateOfBirth)
+            : undefined,
+      };
+
+      const created = await createLeadService(orgId, payload);
 
       await recordAuditEvent({
         userId,
@@ -619,31 +650,11 @@ leadsRouter.post(
         eventData: {
           firstName: created.firstName,
           lastName: created.lastName,
-          phone: created.phonePrimary,
+          phone: created.phone,
         },
       });
 
-      const score = computeLeadScore({
-        status: created.status,
-        createdAt: created.createdAt,
-        permissionToContactPhone: created.permissionToContactPhone,
-      });
-
-      res.status(201).json({
-        id: created.id,
-        firstName: created.firstName,
-        lastName: created.lastName,
-        email: created.email,
-        phone: created.phonePrimary,
-        state: created.state,
-        status: created.status,
-        createdAt: created.createdAt.toISOString(),
-        updatedAt: created.updatedAt.toISOString(),
-        permissionToContactPhone: created.permissionToContactPhone,
-        doNotContact: created.status === "DO_NOT_CONTACT",
-        assignedToUserId: created.assignedToUserId,
-        score,
-      });
+      res.status(201).json(created);
     } catch (err) {
       next(err);
     }
@@ -658,32 +669,22 @@ leadsRouter.post(
  * Allowed roles: ADMIN / MANAGER / DIRECTOR / AGENT
  *   - AND the lead must be visible under that role's scope.
  *
- * Read-only roles (COMPLIANCE_OFFICER / VIEW_ONLY) get 403.
+ * Read-only roles (COMPLIANCE_OFFICER / VIEW_ONLY) blocked by requireRole.
  */
 leadsRouter.put(
   "/:id",
   requireAuth,
+  requireRole(Roles.ADMIN, Roles.MANAGER, Roles.DIRECTOR, Roles.AGENT),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
       const { id } = req.params;
 
       if (!id) {
         res.status(400).json({ error: "id is required" });
-        return;
-      }
-
-      if (
-        !role ||
-        role === "COMPLIANCE_OFFICER" ||
-        role === "VIEW_ONLY"
-      ) {
-        res.status(403).json({
-          error: "Not authorized to update leads",
-        });
         return;
       }
 
@@ -745,6 +746,16 @@ leadsRouter.put(
       const updated = await prisma.lead.update({
         where: { id: existing.id },
         data,
+        include: {
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
       });
 
       await recordAuditEvent({
@@ -762,6 +773,10 @@ leadsRouter.put(
         permissionToContactPhone: updated.permissionToContactPhone,
       });
 
+      const assignedToName = buildAssigneeDisplayName(
+        updated.assignedTo ?? null
+      );
+
       res.json({
         id: updated.id,
         firstName: updated.firstName,
@@ -775,6 +790,7 @@ leadsRouter.put(
         permissionToContactPhone: updated.permissionToContactPhone,
         doNotContact: updated.status === "DO_NOT_CONTACT",
         assignedToUserId: updated.assignedToUserId,
+        assignedToName,
         score,
       });
     } catch (err) {
@@ -788,26 +804,17 @@ leadsRouter.put(
  *
  * Upload a CSV file of leads.
  * Only ADMIN and MANAGER roles are allowed.
- *
- * Expects multipart/form-data with:
- *   - file: CSV file
- *   - source (optional): string label for the import
  */
 leadsRouter.post(
   "/import",
   requireAuth,
+  requireRole(Roles.ADMIN, Roles.MANAGER),
   upload.single("file"),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
-
-      if (!role || !["ADMIN", "MANAGER"].includes(role)) {
-        res.status(403).json({ error: "Not authorized to import leads" });
-        return;
-      }
 
       const file = (req as any).file as
         | { buffer: Buffer; originalname: string }
@@ -849,18 +856,11 @@ leadsRouter.post(
 leadsRouter.get(
   "/import/jobs",
   requireAuth,
+  requireRole(Roles.ADMIN, Roles.MANAGER),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
-      const role = normalizeRole(user.role as string | undefined);
-
-      if (!role || !["ADMIN", "MANAGER"].includes(role)) {
-        res
-          .status(403)
-          .json({ error: "Not authorized to view lead imports" });
-        return;
-      }
 
       const limitRaw = req.query.limit;
       let limit = 20;

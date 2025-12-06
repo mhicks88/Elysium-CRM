@@ -10,15 +10,19 @@ import {
 } from "./types";
 
 /**
- * Get enrollment journey for a lead, if it exists.
+ * Get enrollment journey for a lead, scoped by organization.
  */
 export async function getEnrollmentForLead(
+  organizationId: string,
   leadId: string
 ): Promise<Enrollment | null> {
-  if (!leadId) return null;
+  if (!organizationId || !leadId) return null;
 
   const row = await prisma.enrollmentJourney.findFirst({
-    where: { leadId },
+    where: {
+      organizationId,
+      leadId,
+    },
     orderBy: { updatedAt: "desc" },
   });
 
@@ -40,29 +44,40 @@ export async function getEnrollmentForLead(
  * Upsert enrollment journey for a lead.
  *
  * We:
- * - Ensure the lead exists (to derive organizationId)
+ * - Ensure the lead exists AND belongs to this organization
  * - Create or update the EnrollmentJourney row for that lead
  * - Optionally track who updated it via updatedByUserId (future enhancement)
  */
 export async function upsertEnrollmentForLead(
+  organizationId: string,
   leadId: string,
   input: UpsertEnrollmentInput
 ): Promise<Enrollment> {
-  if (!leadId) {
-    throw new Error("leadId is required for enrollment upsert");
+  if (!organizationId || !leadId) {
+    throw new Error(
+      "organizationId and leadId are required for enrollment upsert"
+    );
   }
 
-  const lead = await prisma.lead.findUnique({
-    where: { id: leadId },
+  const lead = await prisma.lead.findFirst({
+    where: {
+      id: leadId,
+      organizationId,
+    },
     select: { id: true, organizationId: true },
   });
 
   if (!lead) {
-    throw new Error(`Lead not found for enrollment (leadId=${leadId})`);
+    throw new Error(
+      `Lead not found for enrollment (leadId=${leadId}, org=${organizationId})`
+    );
   }
 
   const existing = await prisma.enrollmentJourney.findFirst({
-    where: { leadId: lead.id },
+    where: {
+      organizationId,
+      leadId: lead.id,
+    },
   });
 
   const stage = input.stage as any; // matches EnrollmentJourneyStage enum values

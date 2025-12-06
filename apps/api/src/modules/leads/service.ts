@@ -29,10 +29,49 @@ export interface LeadImportSummary {
   failedCount: number;
 }
 
+// Local extension to allow optional dateOfBirth even if the shared
+// type doesn't know about it yet.
+type CreateLeadWithDob = CreateLeadRequestDto & {
+  dateOfBirth?: string | null;
+};
+
+// Lead with its assignee relation loaded
+type LeadWithAssignee = Lead & {
+  assignedTo?: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  } | null;
+};
+
+function buildAssignedToName(
+  user:
+    | {
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+      }
+    | null
+    | undefined
+): string | null {
+  if (!user) return null;
+  const fullName = [user.firstName, user.lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (fullName) return fullName;
+  if (user.email) return user.email;
+  return user.id;
+}
+
 /**
  * Map a Prisma Lead record into a LeadListItemDto.
  */
-function mapLeadToListItem(lead: Lead): LeadListItemDto {
+function mapLeadToListItem(lead: LeadWithAssignee): LeadListItemDto {
+  const assignedToName = buildAssignedToName(lead.assignedTo ?? null);
+
   return {
     id: lead.id,
     firstName: lead.firstName,
@@ -43,14 +82,16 @@ function mapLeadToListItem(lead: Lead): LeadListItemDto {
     status: lead.status as LeadStatus,
     createdAt: lead.createdAt.toISOString(),
     updatedAt: lead.updatedAt.toISOString(),
-    assignedToName: null, // TODO: map from lead.assignedTo when we include that relation
+    assignedToName,
   };
 }
 
 /**
  * Map a Prisma Lead record into a LeadDetailDto.
  */
-function mapLeadToDetail(lead: Lead): LeadDetailDto {
+function mapLeadToDetail(lead: LeadWithAssignee): LeadDetailDto {
+  const assignedToName = buildAssignedToName(lead.assignedTo ?? null);
+
   return {
     id: lead.id,
     firstName: lead.firstName,
@@ -67,7 +108,7 @@ function mapLeadToDetail(lead: Lead): LeadDetailDto {
     createdAt: lead.createdAt.toISOString(),
     updatedAt: lead.updatedAt.toISOString(),
     assignedToId: lead.assignedToUserId ?? null,
-    assignedToName: null, // TODO: map from relation when needed
+    assignedToName,
   };
 }
 
@@ -110,11 +151,23 @@ export async function listLeads(
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
+      include: {
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
     }),
     prisma.lead.count({ where }),
   ]);
 
-  const items: LeadListItemDto[] = leads.map(mapLeadToListItem);
+  const items: LeadListItemDto[] = leads.map((lead) =>
+    mapLeadToListItem(lead as LeadWithAssignee)
+  );
 
   return {
     items,
@@ -136,6 +189,16 @@ export async function getLeadById(
       id: leadId,
       organizationId,
     },
+    include: {
+      assignedTo: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+    },
   });
 
   if (!lead) {
@@ -144,7 +207,7 @@ export async function getLeadById(
     throw error;
   }
 
-  return mapLeadToDetail(lead);
+  return mapLeadToDetail(lead as LeadWithAssignee);
 }
 
 /**
@@ -152,17 +215,26 @@ export async function getLeadById(
  */
 export async function createLead(
   organizationId: string,
-  payload: CreateLeadRequestDto
+  payload: CreateLeadWithDob
 ): Promise<LeadDetailDto> {
   const now = new Date();
+
+  // Date of birth: allow ISO or YYYY-MM-DD; fall back to sentinel if invalid.
+  const defaultDob = new Date("1900-01-01T00:00:00.000Z");
+  let dob = defaultDob;
+  if (payload.dateOfBirth) {
+    const parsed = new Date(payload.dateOfBirth);
+    if (!Number.isNaN(parsed.getTime())) {
+      dob = parsed;
+    }
+  }
 
   const createData: Prisma.LeadUncheckedCreateInput = {
     organizationId,
     firstName: payload.firstName,
     lastName: payload.lastName,
 
-    // TODO: wire this to real DOB once the UI collects it
-    dateOfBirth: new Date("1900-01-01T00:00:00.000Z"),
+    dateOfBirth: dob,
 
     phonePrimary: payload.phone,
     phoneAlt: null,
@@ -199,7 +271,13 @@ export async function createLead(
     data: createData,
   });
 
-  return mapLeadToDetail(lead);
+  // Newly created lead won't have the relation hydrated yet
+  const withAssignee: LeadWithAssignee = {
+    ...(lead as Lead),
+    assignedTo: null,
+  };
+
+  return mapLeadToDetail(withAssignee);
 }
 
 /**
@@ -293,9 +371,19 @@ export async function updateLead(
   const lead = await prisma.lead.update({
     where: { id: leadId },
     data: updateData,
+    include: {
+      assignedTo: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+    },
   });
 
-  return mapLeadToDetail(lead);
+  return mapLeadToDetail(lead as LeadWithAssignee);
 }
 
 /**

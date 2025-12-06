@@ -51,6 +51,7 @@ interface LeadListItem {
   doNotContact?: boolean;
   // Optional assignment info if backend provides it
   assignedToUserId?: string | null;
+  assignedToName?: string | null;
 }
 
 const statusLabel: Record<LeadStatusGroup, string> = {
@@ -222,6 +223,7 @@ const LeadsIndex: React.FC = () => {
         lead.phone,
         lead.state,
         lead.assignedToUserId,
+        lead.assignedToName,
       ]
         .filter(Boolean)
         .join(" ")
@@ -520,7 +522,7 @@ const LeadsIndex: React.FC = () => {
           >
             <Input
               label="Search"
-              hint="Name, email, phone, state, or assignee userId"
+              hint="Name, email, phone, state, or assignee name/userId"
               placeholder="Start typing to filter…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -695,16 +697,29 @@ const LeadsIndex: React.FC = () => {
                         </td>
                         <td style={{ padding: "0.5rem" }}>
                           {lead.assignedToUserId ? (
-                            <span
+                            <div
                               style={{
-                                fontSize:
-                                  "var(--text-xs)",
-                                color:
-                                  "var(--color-text-soft)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "0.1rem",
                               }}
                             >
-                              {lead.assignedToUserId}
-                            </span>
+                              {lead.assignedToName && (
+                                <span>{lead.assignedToName}</span>
+                              )}
+                              <span
+                                style={{
+                                  fontSize:
+                                    "var(--text-xs)",
+                                  color:
+                                    "var(--color-text-soft)",
+                                }}
+                              >
+                                {lead.assignedToName
+                                  ? `(${lead.assignedToUserId})`
+                                  : lead.assignedToUserId}
+                              </span>
+                            </div>
                           ) : (
                             <span
                               style={{

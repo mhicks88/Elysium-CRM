@@ -58,7 +58,7 @@ export interface UpdateLeadRequestDto {
 
 /**
  * Payload for creating a new lead.
- * 
+ *
  * This is intentionally a bit slimmer than the full Lead domain model.
  * The API will fill in required-but-not-yet-collected fields with
  * safe defaults (leadSource, permissionSource, address, etc.).
@@ -76,5 +76,8 @@ export interface CreateLeadRequestDto {
   permissionToContactPhone?: boolean;
   doNotContact?: boolean;
   assignedToId?: string | null;
+
+  // Optional date-of-birth in ISO or YYYY-MM-DD format.
+  dateOfBirth?: string | null;
 }
 

@@ -2,7 +2,6 @@
 
 import {
   Router,
-  type Request,
   type Response,
   type NextFunction,
 } from "express";
@@ -23,7 +22,7 @@ export const enrollmentRouter = Router();
 
 /**
  * GET /api/enrollment/:leadId
- * Fetch enrollment info for a given lead.
+ * Fetch enrollment info for a given lead, scoped by organization.
  *
  * Any authenticated user can read enrollment; edits are role-restricted.
  * If no enrollment journey exists yet, we return 200 with `null`.
@@ -34,13 +33,18 @@ enrollmentRouter.get(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const { leadId } = req.params;
+      const user = req.user!;
 
       if (!leadId) {
         res.status(400).json({ error: "leadId is required" });
         return;
       }
 
-      const enrollment = await getEnrollmentForLead(leadId);
+      const enrollment = await getEnrollmentForLead(
+        user.organizationId,
+        leadId
+      );
+
       if (!enrollment) {
         res.json(null);
         return;
@@ -97,10 +101,12 @@ enrollmentRouter.put(
         return;
       }
 
-      // Snapshot previous state for audit purposes
-      const previous = await getEnrollmentForLead(leadId);
+      const orgId = user.organizationId;
 
-      const enrollment = await upsertEnrollmentForLead(leadId, {
+      // Snapshot previous state for audit purposes
+      const previous = await getEnrollmentForLead(orgId, leadId);
+
+      const enrollment = await upsertEnrollmentForLead(orgId, leadId, {
         stage,
         notes,
       });

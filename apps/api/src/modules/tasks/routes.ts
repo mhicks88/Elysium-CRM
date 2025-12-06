@@ -18,7 +18,7 @@
 //
 // Write permissions (create/update/delete):
 //  - ADMIN / MANAGER / AGENT
-//  - DIRECTOR currently not in Roles enum, so treated like original code
+//  - DIRECTOR is currently read-only in tasks (can still see via role scoping)
 //  - COMPLIANCE_OFFICER / VIEW_ONLY are read-only for tasks.
 
 import {
@@ -45,35 +45,6 @@ import { recordAuditEvent } from "../audit/service";
 
 export const tasksRouter = Router();
 
-// Canonical API roles we expect on req.user.role
-type ApiRole =
-  | "ADMIN"
-  | "MANAGER"
-  | "DIRECTOR"
-  | "AGENT"
-  | "COMPLIANCE_OFFICER"
-  | "VIEW_ONLY";
-
-function normalizeRole(
-  raw: string | null | undefined
-): ApiRole | null {
-  if (!raw) return null;
-  const r = String(raw).toUpperCase();
-
-  if (r === "ADMIN") return "ADMIN";
-  if (r === "MANAGER") return "MANAGER";
-  if (r === "DIRECTOR") return "DIRECTOR";
-  if (r === "AGENT") return "AGENT";
-  if (r === "COMPLIANCE" || r === "COMPLIANCE_OFFICER") {
-    return "COMPLIANCE_OFFICER";
-  }
-  if (r === "READ_ONLY" || r === "VIEW_ONLY") {
-    return "VIEW_ONLY";
-  }
-
-  return null;
-}
-
 /**
  * Compute assignee userIds for a given user + role, using the same
  * semantics as leads and calls:
@@ -85,28 +56,23 @@ function normalizeRole(
 async function getAssigneeIdsForUserRole(params: {
   organizationId: string;
   userId: string;
-  role: ApiRole | null;
+  role: Roles;
 }): Promise<string[] | null> {
   const { organizationId, userId, role } = params;
 
-  if (!role) {
-    // Defensive: unknown role → self only
-    return [userId];
-  }
-
   if (
-    role === "ADMIN" ||
-    role === "COMPLIANCE_OFFICER" ||
-    role === "VIEW_ONLY"
+    role === Roles.ADMIN ||
+    role === Roles.COMPLIANCE_OFFICER ||
+    role === Roles.VIEW_ONLY
   ) {
     return null; // org-wide
   }
 
-  if (role === "AGENT") {
+  if (role === Roles.AGENT) {
     return [userId];
   }
 
-  if (role === "MANAGER") {
+  if (role === Roles.MANAGER) {
     const agents = await prisma.user.findMany({
       where: {
         organizationId,
@@ -117,7 +83,7 @@ async function getAssigneeIdsForUserRole(params: {
     return [userId, ...agents.map((a) => a.id)];
   }
 
-  if (role === "DIRECTOR") {
+  if (role === Roles.DIRECTOR) {
     const managers = await prisma.user.findMany({
       where: {
         organizationId,
@@ -163,7 +129,7 @@ tasksRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
 
       const statusParam =
         typeof req.query.status === "string"
@@ -233,15 +199,17 @@ tasksRouter.get(
 
 /**
  * GET /api/tasks/:leadId
- * List tasks for a given lead.
+ * List tasks for a given lead, scoped by organization.
  *
- * Any authenticated user can read tasks; mutations are role-restricted.
+ * Any authenticated user in the org can read tasks for that lead.
  */
 tasksRouter.get(
   "/:leadId",
   requireAuth,
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
+      const user = req.user!;
+      const orgId = user.organizationId;
       const { leadId } = req.params;
 
       if (!leadId) {
@@ -249,7 +217,23 @@ tasksRouter.get(
         return;
       }
 
-      const tasks = await listTasksForLead(leadId);
+      // Ensure the lead belongs to this org (defensive)
+      const lead = await prisma.lead.findFirst({
+        where: {
+          id: leadId,
+          organizationId: orgId,
+        },
+      });
+
+      if (!lead) {
+        res.status(404).json({ error: "Lead not found" });
+        return;
+      }
+
+      const tasks = await listTasksForLead({
+        organizationId: orgId,
+        leadId,
+      });
 
       res.json(
         tasks.map((t) => ({
@@ -274,7 +258,7 @@ tasksRouter.get(
  * POST /api/tasks/:leadId
  * Create a new task for the lead.
  *
- * Allowed roles (via Roles enum): ADMIN, AGENT, MANAGER
+ * Allowed roles: ADMIN, AGENT, MANAGER
  *
  * Body: { title: string; description?: string; assignedToUserId?: string; status?: ApiTaskStatus; dueAt?: string }
  */
@@ -301,6 +285,19 @@ tasksRouter.post(
       const user = req.user!;
       const organizationId: string = user.organizationId;
       const userId: string = user.id;
+
+      // Ensure the lead belongs to this org
+      const lead = await prisma.lead.findFirst({
+        where: {
+          id: leadId,
+          organizationId,
+        },
+      });
+
+      if (!lead) {
+        res.status(404).json({ error: "Lead not found" });
+        return;
+      }
 
       let dueAtDate: Date | null = null;
       if (dueAt) {
@@ -377,6 +374,19 @@ tasksRouter.patch(
 
       const user = req.user!;
       const organizationId: string = user.organizationId;
+
+      // Ensure the lead belongs to this org
+      const lead = await prisma.lead.findFirst({
+        where: {
+          id: leadId,
+          organizationId,
+        },
+      });
+
+      if (!lead) {
+        res.status(404).json({ error: "Lead not found" });
+        return;
+      }
 
       let dueAtDate: Date | null | undefined = undefined;
       if (dueAt === null) {
@@ -459,6 +469,19 @@ tasksRouter.delete(
 
       const user = req.user!;
       const organizationId: string = user.organizationId;
+
+      // Ensure the lead belongs to this org
+      const lead = await prisma.lead.findFirst({
+        where: {
+          id: leadId,
+          organizationId,
+        },
+      });
+
+      if (!lead) {
+        res.status(404).json({ error: "Lead not found" });
+        return;
+      }
 
       const deleted = await deleteTaskForLead({
         organizationId,

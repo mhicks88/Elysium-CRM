@@ -1,64 +1,42 @@
+// apps/web/src/App.tsx
+
 import React from "react";
 import {
   BrowserRouter,
   Routes,
   Route,
   Navigate,
-  useLocation,
 } from "react-router-dom";
-
 import { AuthProvider, useAuth } from "./lib/auth";
 
-import LoginPage from "./routes/auth";
+// Route components
 import LeadsIndex from "./routes/leads";
 import LeadDetailPage from "./routes/leads/LeadDetail";
 import NewLeadPage from "./routes/leads/NewLead";
-import LeadImportPage from "./routes/leads/LeadImport";
 import AdminPage from "./routes/admin/Admin";
-import DashboardPage from "./routes/dashboard/Dashboard";
+import CompliancePage from "./routes/compliance/Compliance";
+// NOTE: we keep CallDetail, drop CallsPage for now
 import CallDetailPage from "./routes/calls/CallDetail";
-import CoachingQueuePage from "./routes/calls/CoachingQueue";
 import TasksPage from "./routes/tasks/TasksPage";
-import ComplianceReportsPage from "./routes/ComplianceReportsPage";
+import LoginPage from "./routes/auth/Login";
+import SignupOrgPage from "./routes/auth/SignupOrg";
 
-// Simple guard: requires any authenticated user
 function RequireAuth({ children }: { children: JSX.Element }) {
-  const { user, isAuthenticated } = useAuth();
-  const location = useLocation();
-
-  if (!isAuthenticated || !user) {
-    return (
-      <Navigate
-        to="/login"
-        replace
-        state={{ from: location }}
-      />
-    );
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
   }
-
   return children;
 }
 
-function AppRoutes() {
+const AppRoutes: React.FC = () => {
   return (
     <Routes>
-      {/* Root: send to /dashboard */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-      {/* Login is public */}
+      {/* Public auth routes */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupOrgPage />} />
 
-      {/* Role-based home dashboard */}
-      <Route
-        path="/dashboard"
-        element={
-          <RequireAuth>
-            <DashboardPage />
-          </RequireAuth>
-        }
-      />
-
-      {/* Leads list */}
+      {/* Protected app routes */}
       <Route
         path="/leads"
         element={
@@ -67,8 +45,6 @@ function AppRoutes() {
           </RequireAuth>
         }
       />
-
-      {/* New lead */}
       <Route
         path="/leads/new"
         element={
@@ -77,18 +53,6 @@ function AppRoutes() {
           </RequireAuth>
         }
       />
-
-      {/* Lead import */}
-      <Route
-        path="/leads/import"
-        element={
-          <RequireAuth>
-            <LeadImportPage />
-          </RequireAuth>
-        }
-      />
-
-      {/* Lead detail */}
       <Route
         path="/leads/:id"
         element={
@@ -98,7 +62,7 @@ function AppRoutes() {
         }
       />
 
-      {/* Call detail (single call session) */}
+      {/* Calls: detail-only route for now */}
       <Route
         path="/calls/:id"
         element={
@@ -108,17 +72,6 @@ function AppRoutes() {
         }
       />
 
-      {/* Coaching review queue */}
-      <Route
-        path="/calls/coaching"
-        element={
-          <RequireAuth>
-            <CoachingQueuePage />
-          </RequireAuth>
-        }
-      />
-
-      {/* Global tasks queue */}
       <Route
         path="/tasks"
         element={
@@ -127,18 +80,6 @@ function AppRoutes() {
           </RequireAuth>
         }
       />
-
-      {/* Compliance reports */}
-      <Route
-        path="/reports/compliance"
-        element={
-          <RequireAuth>
-            <ComplianceReportsPage />
-          </RequireAuth>
-        }
-      />
-
-      {/* Admin compliance & ops dashboard */}
       <Route
         path="/admin"
         element={
@@ -147,14 +88,23 @@ function AppRoutes() {
           </RequireAuth>
         }
       />
+      <Route
+        path="/compliance"
+        element={
+          <RequireAuth>
+            <CompliancePage />
+          </RequireAuth>
+        }
+      />
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      {/* Default redirect */}
+      <Route path="/" element={<Navigate to="/leads" replace />} />
+      <Route path="*" element={<Navigate to="/leads" replace />} />
     </Routes>
   );
-}
+};
 
-export default function App() {
+const App: React.FC = () => {
   return (
     <BrowserRouter>
       <AuthProvider>
@@ -162,5 +112,7 @@ export default function App() {
       </AuthProvider>
     </BrowserRouter>
   );
-}
+};
+
+export default App;
 

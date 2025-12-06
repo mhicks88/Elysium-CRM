@@ -1,23 +1,31 @@
-// apps/web/src/routes/auth/Login.tsx
+// apps/web/src/routes/auth/SignupOrg.tsx
 
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { login, setAccessToken } from "../../lib/apiClient";
+import { signupOrg, setAccessToken } from "../../lib/apiClient";
 import { useAuth } from "../../lib/auth";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 
-const LoginPage: React.FC = () => {
+const SignupOrgPage: React.FC = () => {
   const navigate = useNavigate();
   const { setUser } = useAuth();
 
+  const [organizationName, setOrganizationName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = email.trim().length > 0 && password.length > 0;
+  const canSubmit =
+    organizationName.trim().length > 0 &&
+    firstName.trim().length > 0 &&
+    lastName.trim().length > 0 &&
+    email.trim().length > 0 &&
+    password.length >= 8;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -27,12 +35,17 @@ const LoginPage: React.FC = () => {
     setError(null);
 
     try {
-      const result = await login({
+      const payload = {
+        organizationName: organizationName.trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         email: email.trim(),
         password,
-      });
+      };
 
-      // result should be { accessToken, user: { id, email, role, organizationId } }
+      const result = await signupOrg(payload);
+
+      // result has shape { accessToken, user: { id, email, role, organizationId } }
       if (result?.accessToken) {
         setAccessToken(result.accessToken);
       }
@@ -46,10 +59,10 @@ const LoginPage: React.FC = () => {
         });
       }
 
-      // After login, send them to main app view
+      // After signup, land in the main app (you can change this to /admin if you prefer)
       navigate("/leads");
     } catch (err: any) {
-      setError(err?.message ?? "Login failed");
+      setError(err?.message ?? "Signup failed");
     } finally {
       setSubmitting(false);
     }
@@ -67,10 +80,10 @@ const LoginPage: React.FC = () => {
           "radial-gradient(circle at top, rgba(56,189,248,0.08), transparent 55%), radial-gradient(circle at bottom, rgba(59,130,246,0.08), transparent 55%)",
       }}
     >
-      <div style={{ maxWidth: 420, width: "100%" }}>
+      <div style={{ maxWidth: 480, width: "100%" }}>
         <Card
-          title="Sign in to Elysium"
-          description="Log in to access your compliance-first CRM workspace."
+          title="Create your organization"
+          description="Spin up a new Elysium CRM workspace with an admin account."
         >
           {error && (
             <div
@@ -93,9 +106,38 @@ const LoginPage: React.FC = () => {
             }}
           >
             <Input
+              label="Organization name"
+              requiredLabel
+              placeholder="Acme Insurance Group"
+              value={organizationName}
+              onChange={(e) => setOrganizationName(e.target.value)}
+            />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "var(--space-3)",
+              }}
+            >
+              <Input
+                label="First name"
+                requiredLabel
+                placeholder="Jane"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+              <Input
+                label="Last name"
+                requiredLabel
+                placeholder="Doe"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+            </div>
+            <Input
               label="Email"
               requiredLabel
-              placeholder="you@example.com"
+              placeholder="jane.doe@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -103,7 +145,7 @@ const LoginPage: React.FC = () => {
               label="Password"
               requiredLabel
               type="password"
-              placeholder="Your password"
+              placeholder="Minimum 8 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -122,16 +164,16 @@ const LoginPage: React.FC = () => {
                   color: "var(--color-text-soft)",
                 }}
               >
-                Need a new org? <Link to="/signup">Create one</Link>
+                Already have an account?{" "}
+                <Link to="/login">Log in</Link>
               </div>
-
               <Button
                 type="submit"
                 size="sm"
                 isLoading={submitting}
                 disabled={!canSubmit || submitting}
               >
-                Sign in
+                Create workspace
               </Button>
             </div>
           </form>
@@ -141,5 +183,5 @@ const LoginPage: React.FC = () => {
   );
 };
 
-export default LoginPage;
+export default SignupOrgPage;
 

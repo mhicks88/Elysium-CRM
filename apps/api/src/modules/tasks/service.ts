@@ -62,11 +62,19 @@ function mapDbTaskToApi(db: any): Task {
 }
 
 /**
- * List tasks for a given lead.
+ * List tasks for a given lead, scoped by organization.
  */
-export async function listTasksForLead(leadId: string): Promise<Task[]> {
+export async function listTasksForLead(params: {
+  organizationId: string;
+  leadId: string;
+}): Promise<Task[]> {
+  const { organizationId, leadId } = params;
+
   const rows = await prisma.task.findMany({
-    where: { leadId },
+    where: {
+      organizationId,
+      leadId,
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -133,8 +141,7 @@ export async function listTasksForAssignees(params: {
  * Create a new task for a lead.
  *
  * We derive:
- * - organizationId from the lead
- * - assignedToUserId from the authenticated user if not provided
+ * - organizationId from the route
  * - type = OTHER
  * - priority = MEDIUM
  */

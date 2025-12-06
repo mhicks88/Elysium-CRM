@@ -58,6 +58,7 @@ interface LeadDetail {
   permissionToContactPhone: boolean;
   doNotContact: boolean;
   assignedToUserId?: string | null;
+  assignedToName?: string | null;
 }
 
 const statusLabel: Record<LeadStatus, string> = {
@@ -714,7 +715,9 @@ const LeadDetailPage: React.FC = () => {
                     readOnly={!isEditing || !canEditAssignee}
                     hint={
                       canEditAssignee
-                        ? "Assign this lead to an agent by userId."
+                        ? lead.assignedToName
+                          ? `Currently assigned to: ${lead.assignedToName}. Change by userId.`
+                          : "Assign this lead to an agent by userId."
                         : "Only admins, directors, and managers can change assignment."
                     }
                   />

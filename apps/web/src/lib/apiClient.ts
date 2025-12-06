@@ -147,6 +147,29 @@ export async function login(payload: { email: string; password: string }) {
   return res.json();
 }
 
+// NEW: Org + Admin Signup
+export async function signupOrg(payload: {
+  organizationName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+}) {
+  const res = await fetch(buildUrl("/api/auth/signup-org"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Signup failed");
+  }
+
+  return res.json();
+}
+
 // -----------------------------------------------------------------------------
 // COMPLIANCE
 // -----------------------------------------------------------------------------
@@ -752,7 +775,13 @@ export type AdminUserDto = {
   firstName: string;
   lastName: string;
   email: string;
-  role: "ADMIN" | "MANAGER" | "DIRECTOR" | "AGENT" | "COMPLIANCE" | "READ_ONLY";
+  role:
+    | "ADMIN"
+    | "MANAGER"
+    | "DIRECTOR"
+    | "AGENT"
+    | "COMPLIANCE"
+    | "READ_ONLY";
   isActive: boolean;
   managerId: string | null;
   directorId: string | null;

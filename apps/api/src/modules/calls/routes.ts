@@ -7,8 +7,8 @@
 //  - MANAGER
 //  - DIRECTOR
 //  - AGENT
-//  - COMPLIANCE_OFFICER (mapped from DB COMPLIANCE)
-//  - VIEW_ONLY        (mapped from DB READ_ONLY)
+//  - COMPLIANCE_OFFICER
+//  - VIEW_ONLY
 //
 // Visibility:
 //  - ADMIN / COMPLIANCE_OFFICER / VIEW_ONLY: org-wide calls (read)
@@ -32,7 +32,9 @@ import {
 } from "express";
 import {
   requireAuth,
+  requireRole,
   type AuthenticatedRequest,
+  Roles,
 } from "../../middleware/auth";
 import { prisma } from "../../db/client";
 import { recordAuditEvent } from "../audit/service";
@@ -49,35 +51,6 @@ import {
 
 export const callsRouter = Router();
 
-// Canonical API roles we expect on req.user.role
-type ApiRole =
-  | "ADMIN"
-  | "MANAGER"
-  | "DIRECTOR"
-  | "AGENT"
-  | "COMPLIANCE_OFFICER"
-  | "VIEW_ONLY";
-
-function normalizeRole(
-  raw: string | null | undefined
-): ApiRole | null {
-  if (!raw) return null;
-  const r = String(raw).toUpperCase();
-
-  if (r === "ADMIN") return "ADMIN";
-  if (r === "MANAGER") return "MANAGER";
-  if (r === "DIRECTOR") return "DIRECTOR";
-  if (r === "AGENT") return "AGENT";
-  if (r === "COMPLIANCE" || r === "COMPLIANCE_OFFICER") {
-    return "COMPLIANCE_OFFICER";
-  }
-  if (r === "READ_ONLY" || r === "VIEW_ONLY") {
-    return "VIEW_ONLY";
-  }
-
-  return null;
-}
-
 /**
  * Compute the list of userIds (agents) whose calls a given user is allowed to see,
  * based on their role and the manager/director hierarchy.
@@ -89,31 +62,26 @@ function normalizeRole(
 async function getAllowedAgentIdsForUser(params: {
   organizationId: string;
   userId: string;
-  role: ApiRole | null;
+  role: Roles;
 }): Promise<string[] | null> {
   const { organizationId, userId, role } = params;
 
-  if (!role) {
-    // Defensive: unknown role → self only
-    return [userId];
-  }
-
   // Org-wide roles
   if (
-    role === "ADMIN" ||
-    role === "COMPLIANCE_OFFICER" ||
-    role === "VIEW_ONLY"
+    role === Roles.ADMIN ||
+    role === Roles.COMPLIANCE_OFFICER ||
+    role === Roles.VIEW_ONLY
   ) {
     return null;
   }
 
   // Agents only see their own calls
-  if (role === "AGENT") {
+  if (role === Roles.AGENT) {
     return [userId];
   }
 
   // Managers see their calls + their agents' calls
-  if (role === "MANAGER") {
+  if (role === Roles.MANAGER) {
     const agents = await prisma.user.findMany({
       where: {
         organizationId,
@@ -125,7 +93,7 @@ async function getAllowedAgentIdsForUser(params: {
   }
 
   // Directors see their calls + managers + agents under them
-  if (role === "DIRECTOR") {
+  if (role === Roles.DIRECTOR) {
     const managers = await prisma.user.findMany({
       where: {
         organizationId,
@@ -170,20 +138,12 @@ async function getAllowedAgentIdsForUser(params: {
 callsRouter.post(
   "/",
   requireAuth,
+  requireRole(Roles.ADMIN, Roles.MANAGER, Roles.DIRECTOR, Roles.AGENT),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
       const agentId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
-
-      if (
-        !role ||
-        !["ADMIN", "MANAGER", "DIRECTOR", "AGENT"].includes(role)
-      ) {
-        res.status(403).json({ error: "Not authorized to log calls" });
-        return;
-      }
 
       const {
         leadId,
@@ -376,7 +336,7 @@ callsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
 
       const { leadId, limit: limitRaw } = req.query;
 
@@ -449,7 +409,7 @@ callsRouter.get(
 async function getCallVisibleToUser(params: {
   organizationId: string;
   userId: string;
-  role: ApiRole | null;
+  role: Roles;
   callId: string;
 }) {
   const { organizationId, userId, role, callId } = params;
@@ -485,7 +445,7 @@ callsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
       const { id } = req.params;
 
       if (!id) {
@@ -604,43 +564,27 @@ function getLeadStatusAfterDisposition(opts: {
  * Also applies automated lead status transitions based on disposition.
  *
  * Allowed roles: ADMIN, MANAGER, DIRECTOR, AGENT, COMPLIANCE_OFFICER.
- *
- * Body:
- *  {
- *    disposition: "NO_ANSWER" | "LEFT_VOICEMAIL" | "CALLBACK" | "NOT_INTERESTED" | "QUALIFIED" | "TRANSFERRED" | "INVALID_NUMBER" | "OTHER",
- *    callbackAt?: string,
- *    notes?: string
- *  }
  */
 callsRouter.post(
   "/:id/disposition",
   requireAuth,
+  requireRole(
+    Roles.ADMIN,
+    Roles.MANAGER,
+    Roles.DIRECTOR,
+    Roles.AGENT,
+    Roles.COMPLIANCE_OFFICER
+  ),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
       const { id } = req.params;
 
       if (!id) {
         res.status(400).json({ error: "id is required" });
-        return;
-      }
-
-      if (
-        !role ||
-        ![
-          "ADMIN",
-          "MANAGER",
-          "DIRECTOR",
-          "AGENT",
-          "COMPLIANCE_OFFICER",
-        ].includes(role)
-      ) {
-        res.status(403).json({
-          error: "Not authorized to record call dispositions",
-        });
         return;
       }
 
@@ -792,28 +736,17 @@ callsRouter.post(
 callsRouter.post(
   "/:id/coaching",
   requireAuth,
+  requireRole(Roles.ADMIN, Roles.MANAGER, Roles.DIRECTOR, Roles.COMPLIANCE_OFFICER),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const user = req.user!;
       const orgId = user.organizationId;
       const coachUserId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
       const { id } = req.params;
 
       if (!id) {
         res.status(400).json({ error: "id is required" });
-        return;
-      }
-
-      if (
-        !role ||
-        !["ADMIN", "MANAGER", "DIRECTOR", "COMPLIANCE_OFFICER"].includes(
-          role
-        )
-      ) {
-        res
-          .status(403)
-          .json({ error: "Not authorized to add coaching notes" });
         return;
       }
 
@@ -893,7 +826,7 @@ callsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
       const { id } = req.params;
 
       if (!id) {
@@ -976,7 +909,7 @@ callsRouter.get(
       const user = req.user!;
       const orgId = user.organizationId;
       const userId = user.id;
-      const role = normalizeRole(user.role as string | undefined);
+      const role = user.role;
 
       const allowedAgents = await getAllowedAgentIdsForUser({
         organizationId: orgId,
