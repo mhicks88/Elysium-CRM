@@ -9,6 +9,7 @@ import {
   getRecentLeadImports,
   getUsersAdmin,
   updateUserAdmin,
+  createUserAdmin,
   getCallScripts,
   getCallScriptById,
   type LeadCsvImportSummary,
@@ -149,6 +150,18 @@ const Admin: React.FC = () => {
     useState<AdminUserDto | null>(null);
   const [savingUserId, setSavingUserId] =
     useState<string | null>(null);
+
+  // New user creation
+  const [newUserFirstName, setNewUserFirstName] =
+    useState("");
+  const [newUserLastName, setNewUserLastName] =
+    useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserRole, setNewUserRole] =
+    useState<AdminUserDto["role"]>("AGENT");
+  const [newUserPassword, setNewUserPassword] =
+    useState("");
+  const [creatingUser, setCreatingUser] = useState(false);
 
   // === Scripts tab state ===
   const [scripts, setScripts] = useState<CallScript[]>([]);
@@ -338,6 +351,44 @@ const Admin: React.FC = () => {
       );
     } finally {
       setSavingUserId(null);
+    }
+  }
+
+  const newUserCanSubmit =
+    newUserFirstName.trim().length > 0 &&
+    newUserLastName.trim().length > 0 &&
+    newUserEmail.trim().length > 0 &&
+    newUserPassword.length >= 8;
+
+  async function handleCreateUser(e: React.FormEvent) {
+    e.preventDefault();
+    if (!isAdmin || !newUserCanSubmit) return;
+
+    setCreatingUser(true);
+    setUsersError(null);
+
+    try {
+      const created = await createUserAdmin({
+        email: newUserEmail.trim(),
+        firstName: newUserFirstName.trim(),
+        lastName: newUserLastName.trim(),
+        role: newUserRole,
+        initialPassword: newUserPassword,
+      });
+
+      setUsers((prev) => [...prev, created]);
+
+      setNewUserFirstName("");
+      setNewUserLastName("");
+      setNewUserEmail("");
+      setNewUserRole("AGENT");
+      setNewUserPassword("");
+    } catch (err: any) {
+      setUsersError(
+        err?.message ?? "Failed to create user. Check details and try again."
+      );
+    } finally {
+      setCreatingUser(false);
     }
   }
 
@@ -1440,6 +1491,112 @@ const Admin: React.FC = () => {
                       {usersError}
                     </div>
                   )}
+
+                  {/* New user form */}
+                  <form
+                    onSubmit={handleCreateUser}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(5, minmax(0, 1fr))",
+                      gap: "var(--space-3)",
+                      alignItems: "flex-end",
+                      marginBottom: "var(--space-4)",
+                      borderRadius: "var(--radius-md)",
+                      padding: "var(--space-3)",
+                      backgroundColor: "rgba(15,23,42,0.7)",
+                      border:
+                        "1px solid var(--color-border-subtle)",
+                    }}
+                  >
+                    <Input
+                      label="First name"
+                      value={newUserFirstName}
+                      onChange={(e) =>
+                        setNewUserFirstName(e.target.value)
+                      }
+                    />
+                    <Input
+                      label="Last name"
+                      value={newUserLastName}
+                      onChange={(e) =>
+                        setNewUserLastName(e.target.value)
+                      }
+                    />
+                    <Input
+                      label="Email"
+                      type="email"
+                      value={newUserEmail}
+                      onChange={(e) =>
+                        setNewUserEmail(e.target.value)
+                      }
+                    />
+                    <div>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: "var(--text-xs)",
+                          color: "var(--color-text-soft)",
+                          marginBottom: "0.25rem",
+                        }}
+                      >
+                        Role
+                      </label>
+                      <select
+                        value={newUserRole}
+                        onChange={(e) =>
+                          setNewUserRole(
+                            e.target.value as AdminUserDto["role"]
+                          )
+                        }
+                        style={{
+                          width: "100%",
+                          padding: "0.35rem 0.5rem",
+                          borderRadius: "var(--radius-sm)",
+                          border:
+                            "1px solid var(--color-border-subtle)",
+                          backgroundColor:
+                            "rgba(15,23,42,0.9)",
+                          color: "var(--color-text)",
+                          fontSize: "var(--text-xs)",
+                        }}
+                      >
+                        {ROLE_OPTIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <Input
+                        label="Initial password"
+                        type="password"
+                        hint="Min 8 characters"
+                        value={newUserPassword}
+                        onChange={(e) =>
+                          setNewUserPassword(e.target.value)
+                        }
+                      />
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "flex-end",
+                          marginTop: "0.25rem",
+                        }}
+                      >
+                        <Button
+                          size="xs"
+                          type="submit"
+                          isLoading={creatingUser}
+                          disabled={!newUserCanSubmit || creatingUser}
+                        >
+                          Create user
+                        </Button>
+                      </div>
+                    </div>
+                  </form>
+
                   <div
                     style={{
                       display: "flex",

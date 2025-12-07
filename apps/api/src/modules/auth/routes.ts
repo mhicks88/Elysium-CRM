@@ -1,276 +1,343 @@
+// apps/api/src/modules/auth/routes.ts
+
 import { Router, Response, Request } from "express";
 import bcrypt from "bcryptjs";
 import { PrismaClient, UserRole } from "@prisma/client";
 
 import {
   signAccessToken,
+  signPasswordResetToken,
+  verifyPasswordResetToken,
   createSessionForUser,
   getSession,
   rotateSession,
+  revokeAllUserSessions,
   type User,
 } from "./service";
 
 const prisma = new PrismaClient();
 export const authRouter = Router();
 
-// Utility: set refresh cookie
-function setRefreshCookie(res: Response, token: string) {
-  res.cookie("refreshToken", token, {
+function setRefreshCookie(res: Response, refreshToken: string) {
+  const isProd = process.env.NODE_ENV === "production";
+
+  res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: "/api/auth", // only sent to auth endpoints
+    secure: isProd,
+    sameSite: "lax",
+    path: "/api/auth",
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 }
 
-// Map DB enum roles → auth/frontend roles
-function mapDbRoleToAuthRole(dbRole: UserRole): User["role"] {
-  switch (dbRole) {
-    case UserRole.COMPLIANCE:
-      return "COMPLIANCE_OFFICER";
-    case UserRole.READ_ONLY:
-      return "VIEW_ONLY";
-    default:
-      // ADMIN, MANAGER, DIRECTOR, AGENT map 1:1
-      return dbRole as User["role"];
-  }
-}
+// Helper to map Prisma User + Organization into our JWT User type
+function mapDbUserToUser(dbUser: any): User {
+  const role =
+    dbUser.role === UserRole.COMPLIANCE
+      ? "COMPLIANCE_OFFICER"
+      : (dbUser.role as User["role"]);
 
-async function authenticateUser(
-  email: string,
-  password: string
-): Promise<User | null> {
-  const dbUser = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  if (!dbUser || !dbUser.isActive) {
-    return null;
-  }
-
-  const passwordOk = await bcrypt.compare(password, dbUser.passwordHash);
-  if (!passwordOk) {
-    return null;
-  }
-
-  const role = mapDbRoleToAuthRole(dbUser.role);
-
-  const user: User = {
+  return {
     id: dbUser.id,
     email: dbUser.email,
     role,
     organizationId: dbUser.organizationId,
   };
-
-  return user;
 }
 
-async function findUserById(userId: string): Promise<User | null> {
-  const dbUser = await prisma.user.findUnique({
-    where: { id: userId },
-  });
+// POST /api/auth/login
+authRouter.post(
+  "/login",
+  async (req: Request, res: Response): Promise<Response | void> => {
+    try {
+      const { email, password } = req.body ?? {};
+      if (!email || !password) {
+        return res
+          .status(400)
+          .json({ error: "email and password are required" });
+      }
 
-  if (!dbUser || !dbUser.isActive) {
-    return null;
+      const normalizedEmail = String(email).trim().toLowerCase();
+
+      const dbUser = await prisma.user.findFirst({
+        where: { email: normalizedEmail },
+        include: { organization: true },
+      });
+
+      if (!dbUser || !dbUser.passwordHash) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      const passwordOk = await bcrypt.compare(
+        String(password),
+        dbUser.passwordHash
+      );
+
+      if (!passwordOk) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      const user = mapDbUserToUser(dbUser);
+
+      const accessToken = signAccessToken(user);
+      const refreshToken = createSessionForUser(user, req);
+      setRefreshCookie(res, refreshToken);
+
+      return res.json({
+        accessToken,
+        user: {
+          id: dbUser.id,
+          email: dbUser.email,
+          role: user.role,
+          organizationId: dbUser.organizationId,
+          organizationName: dbUser.organization?.name ?? null,
+          firstName: dbUser.firstName,
+          lastName: dbUser.lastName,
+        },
+      });
+    } catch (err) {
+      console.error("Login error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
   }
+);
 
-  const role = mapDbRoleToAuthRole(dbUser.role);
+// POST /api/auth/refresh
+authRouter.post(
+  "/refresh",
+  async (req: Request, res: Response): Promise<Response | void> => {
+    try {
+      const refreshToken = req.cookies?.refreshToken;
+      if (!refreshToken) {
+        return res.status(401).json({ error: "No refresh token" });
+      }
 
-  const user: User = {
-    id: dbUser.id,
-    email: dbUser.email,
-    role,
-    organizationId: dbUser.organizationId,
-  };
+      const session = getSession(refreshToken);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
 
-  return user;
-}
+      const dbUser = await prisma.user.findUnique({
+        where: { id: session.userId },
+        include: { organization: true },
+      });
+
+      if (!dbUser) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      const user = mapDbUserToUser(dbUser);
+      const accessToken = signAccessToken(user);
+
+      // Rotate refresh token for better security
+      const newRefreshToken = rotateSession(refreshToken);
+      setRefreshCookie(res, newRefreshToken);
+
+      return res.json({ accessToken });
+    } catch (err) {
+      console.error("Refresh error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
 
 // POST /api/auth/signup-org
 //
 // Create a new organization and its initial ADMIN user, then log them in.
-// Body:
-// {
-//   organizationName: string;
-//   firstName: string;
-//   lastName: string;
-//   email: string;
-//   password: string;
-// }
 authRouter.post(
   "/signup-org",
-  async (req: Request, res: Response) => {
-    const {
-      organizationName,
-      firstName,
-      lastName,
-      email,
-      password,
-    } = req.body ?? {};
+  async (req: Request, res: Response): Promise<Response | void> => {
+    try {
+      const {
+        organizationName,
+        firstName,
+        lastName,
+        email,
+        password,
+      } = req.body ?? {};
 
-    if (
-      !organizationName ||
-      !firstName ||
-      !lastName ||
-      !email ||
-      !password
-    ) {
-      return res.status(400).json({
-        error:
-          "organizationName, firstName, lastName, email, and password are required",
+      if (!organizationName || !firstName || !lastName || !email || !password) {
+        return res.status(400).json({
+          error:
+            "organizationName, firstName, lastName, email, and password are required",
+        });
+      }
+
+      const trimmedOrgName = String(organizationName).trim();
+      if (!trimmedOrgName) {
+        return res
+          .status(400)
+          .json({ error: "Organization name cannot be empty" });
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+
+      const existingUser = await prisma.user.findFirst({
+        where: { email: normalizedEmail },
       });
-    }
 
-    const trimmedEmail = String(email).trim().toLowerCase();
-    const trimmedOrgName = String(organizationName).trim();
-    const trimmedFirstName = String(firstName).trim();
-    const trimmedLastName = String(lastName).trim();
+      if (existingUser) {
+        return res
+          .status(409)
+          .json({ error: "A user with that email already exists" });
+      }
 
-    if (!trimmedOrgName) {
-      return res.status(400).json({ error: "organizationName is required" });
-    }
+      const passwordHash = await bcrypt.hash(String(password), 10);
 
-    if (!trimmedFirstName || !trimmedLastName) {
-      return res
-        .status(400)
-        .json({ error: "firstName and lastName are required" });
-    }
-
-    // Basic sanity check on password length (you can tighten this later)
-    if (String(password).length < 8) {
-      return res.status(400).json({
-        error: "password must be at least 8 characters long",
-      });
-    }
-
-    // Ensure email is not already used
-    const existingUser = await prisma.user.findUnique({
-      where: { email: trimmedEmail },
-    });
-
-    if (existingUser) {
-      return res
-        .status(409)
-        .json({ error: "A user with that email already exists" });
-    }
-
-    const passwordHash = await bcrypt.hash(String(password), 10);
-
-    // Create org + admin user in a single transaction
-    const [organization, adminUser] = await prisma.$transaction([
-      prisma.organization.create({
+      const organization = await prisma.organization.create({
         data: {
           name: trimmedOrgName,
           settings: {}, // start with empty JSON settings; can be customized later
         },
-      }),
-      // We'll create the user after we know org id, but inside the same tx
-    ]).then(async ([org]) => {
-      const user = await prisma.user.create({
+      });
+
+      const adminUser = await prisma.user.create({
         data: {
-          organizationId: org.id,
-          firstName: trimmedFirstName,
-          lastName: trimmedLastName,
-          email: trimmedEmail,
-          passwordHash,
+          email: normalizedEmail,
+          firstName: String(firstName).trim(),
+          lastName: String(lastName).trim(),
           role: UserRole.ADMIN,
-          isActive: true,
+          passwordHash,
+          organizationId: organization.id,
+        },
+        include: {
+          organization: true,
         },
       });
 
-      return [org, user] as const;
-    });
+      const user: User = {
+        id: adminUser.id,
+        email: adminUser.email,
+        role: "ADMIN",
+        organizationId: organization.id,
+      };
 
-    const authRole = mapDbRoleToAuthRole(adminUser.role);
+      const accessToken = signAccessToken(user);
+      const refreshToken = createSessionForUser(user, req);
+      setRefreshCookie(res, refreshToken);
 
-    const user: User = {
-      id: adminUser.id,
-      email: adminUser.email,
-      role: authRole,
-      organizationId: organization.id,
-    };
-
-    const accessToken = signAccessToken(user);
-    const session = createSessionForUser(user, req);
-
-    setRefreshCookie(res, session.token);
-
-    return res.status(201).json({
-      accessToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        organizationId: user.organizationId,
-      },
-    });
+      return res.status(201).json({
+        accessToken,
+        user: {
+          id: adminUser.id,
+          email: adminUser.email,
+          role: user.role,
+          organizationId: organization.id,
+          organizationName: organization.name,
+          firstName: adminUser.firstName,
+          lastName: adminUser.lastName,
+        },
+      });
+    } catch (err) {
+      console.error("Signup-org error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
   }
 );
 
-// POST /api/auth/login
-authRouter.post("/login", async (req: Request, res: Response) => {
-  const { email, password } = req.body ?? {};
-  if (!email || !password) {
-    return res.status(400).json({ error: "email and password are required" });
+// POST /api/auth/password-reset/request
+authRouter.post(
+  "/password-reset/request",
+  async (req: Request, res: Response): Promise<Response | void> => {
+    try {
+      const { email } = req.body ?? {};
+      if (!email) {
+        return res.status(400).json({ error: "email is required" });
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+
+      const dbUser = await prisma.user.findFirst({
+        where: { email: normalizedEmail },
+        include: { organization: true },
+      });
+
+      if (!dbUser) {
+        // Do not reveal whether the email exists
+        return res.json({ ok: true });
+      }
+
+      const user = mapDbUserToUser(dbUser);
+      const token = signPasswordResetToken(user);
+
+      // TODO: integrate real email service. For now, in non-production,
+      // return the token so dev can copy-paste the link.
+      const isProd = process.env.NODE_ENV === "production";
+
+      if (!isProd) {
+        return res.json({
+          ok: true,
+          resetToken: token,
+        });
+      }
+
+      // In production you'd send an email here.
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("Password reset request error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
   }
+);
 
-  const user = await authenticateUser(email, password);
-  if (!user) {
-    return res.status(401).json({ error: "Invalid credentials" });
+// POST /api/auth/password-reset/confirm
+authRouter.post(
+  "/password-reset/confirm",
+  async (req: Request, res: Response): Promise<Response | void> => {
+    try {
+      const { token, newPassword } = req.body ?? {};
+      if (!token || !newPassword) {
+        return res
+          .status(400)
+          .json({ error: "token and newPassword are required" });
+      }
+
+      const decoded = verifyPasswordResetToken(String(token));
+      if (!decoded) {
+        return res.status(400).json({ error: "Invalid or expired token" });
+      }
+
+      const userId = decoded.sub;
+
+      const dbUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!dbUser) {
+        return res.status(400).json({ error: "Invalid token" });
+      }
+
+      const passwordHash = await bcrypt.hash(String(newPassword), 10);
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      });
+
+      // Invalidate existing sessions for this user
+      revokeAllUserSessions(userId);
+
+      return res.status(204).send();
+    } catch (err) {
+      console.error("Password reset confirm error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
   }
-
-  const accessToken = signAccessToken(user);
-  const session = createSessionForUser(user, req);
-
-  setRefreshCookie(res, session.token);
-
-  return res.json({
-    accessToken,
-    user: {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      organizationId: user.organizationId,
-    },
-  });
-});
-
-// POST /api/auth/refresh
-authRouter.post("/refresh", async (req: Request, res: Response) => {
-  const refreshToken = req.cookies?.refreshToken;
-
-  if (!refreshToken) {
-    return res.status(401).json({ error: "No refresh token" });
-  }
-
-  const session = getSession(refreshToken);
-  if (!session) {
-    return res.status(401).json({ error: "Invalid refresh token" });
-  }
-
-  // Rotate session token
-  const newSession = rotateSession(refreshToken);
-  if (!newSession) {
-    return res.status(401).json({ error: "Unable to rotate session" });
-  }
-
-  const user = await findUserById(newSession.userId);
-  if (!user) {
-    return res.status(401).json({ error: "User not found" });
-  }
-
-  const accessToken = signAccessToken(user);
-  setRefreshCookie(res, newSession.token);
-
-  return res.json({
-    accessToken,
-  });
-});
+);
 
 // POST /api/auth/logout
 authRouter.post("/logout", (req: Request, res: Response) => {
   const refreshToken = req.cookies?.refreshToken;
-  // If you want, you can revoke the specific session here using refreshToken.
+  if (refreshToken) {
+    try {
+      const session = getSession(refreshToken);
+      if (session) {
+        revokeAllUserSessions(session.userId);
+      }
+    } catch {
+      // ignore errors during logout
+    }
+  }
 
   res.clearCookie("refreshToken", {
     path: "/api/auth",

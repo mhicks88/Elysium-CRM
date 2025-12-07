@@ -5,14 +5,17 @@
 //
 // - GET /api/users
 //   List all users in the current org with basic profile + hierarchy fields.
+// - POST /api/users
+//   Create a new user in the current org (ADMIN-only).
 // - PATCH /api/users/:id
-//   Update role, managerId, directorId.
+//   Update role, managerId, directorId, isActive.
 
 import {
   Router,
   type Response,
   type NextFunction,
 } from "express";
+import bcrypt from "bcryptjs";
 import {
   requireAuth,
   requireRole,
@@ -22,6 +25,17 @@ import {
 import { prisma } from "../../db/client";
 
 export const usersRouter = Router();
+
+const ALLOWED_ROLES = [
+  "ADMIN",
+  "MANAGER",
+  "DIRECTOR",
+  "AGENT",
+  "COMPLIANCE",
+  "READ_ONLY",
+] as const;
+
+type AllowedRole = (typeof ALLOWED_ROLES)[number];
 
 /**
  * GET /api/users
@@ -67,6 +81,107 @@ usersRouter.get(
 );
 
 /**
+ * POST /api/users
+ *
+ * ADMIN-only.
+ * Creates a new user in the current org.
+ *
+ * Body:
+ *  - email (required)
+ *  - firstName (required)
+ *  - lastName (required)
+ *  - role (required; one of ALLOWED_ROLES)
+ *  - initialPassword (required; plain text, will be hashed)
+ *  - managerId (optional)
+ *  - directorId (optional)
+ */
+usersRouter.post(
+  "/",
+  requireAuth,
+  requireRole(Roles.ADMIN),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const admin = req.user!;
+      const orgId = admin.organizationId;
+
+      const {
+        email,
+        firstName,
+        lastName,
+        role,
+        initialPassword,
+        managerId,
+        directorId,
+      } = req.body ?? {};
+
+      if (!email || !firstName || !lastName || !role || !initialPassword) {
+        res.status(400).json({
+          error:
+            "email, firstName, lastName, role, and initialPassword are required",
+        });
+        return;
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+
+      if (!ALLOWED_ROLES.includes(role as AllowedRole)) {
+        res.status(400).json({ error: `Invalid role: ${role}` });
+        return;
+      }
+
+      const existing = await prisma.user.findFirst({
+        where: {
+          email: normalizedEmail,
+          organizationId: orgId,
+        },
+      });
+
+      if (existing) {
+        res
+          .status(409)
+          .json({ error: "A user with that email already exists in this org" });
+        return;
+      }
+
+      const passwordHash = await bcrypt.hash(String(initialPassword), 10);
+
+      const newUser = await prisma.user.create({
+        data: {
+          email: normalizedEmail,
+          firstName: String(firstName).trim(),
+          lastName: String(lastName).trim(),
+          role: role as AllowedRole,
+          passwordHash,
+          organizationId: orgId,
+          managerId:
+            managerId && String(managerId).trim().length > 0
+              ? String(managerId).trim()
+              : null,
+          directorId:
+            directorId && String(directorId).trim().length > 0
+              ? String(directorId).trim()
+              : null,
+          isActive: true,
+        },
+      });
+
+      res.status(201).json({
+        id: newUser.id,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        email: newUser.email,
+        role: newUser.role,
+        isActive: newUser.isActive,
+        managerId: newUser.managerId,
+        directorId: newUser.directorId,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
  * PATCH /api/users/:id
  *
  * ADMIN-only for now.
@@ -74,6 +189,7 @@ usersRouter.get(
  *  - role (limited to known values)
  *  - managerId (or null)
  *  - directorId (or null)
+ *  - isActive
  */
 usersRouter.patch(
   "/:id",
@@ -108,18 +224,8 @@ usersRouter.patch(
 
       // Role change (optional)
       if (typeof role === "string") {
-        const allowedRoles = [
-          "ADMIN",
-          "MANAGER",
-          "DIRECTOR",
-          "AGENT",
-          "COMPLIANCE",
-          "READ_ONLY",
-        ];
-        if (!allowedRoles.includes(role)) {
-          res
-            .status(400)
-            .json({ error: `Invalid role: ${role}` });
+        if (!ALLOWED_ROLES.includes(role as AllowedRole)) {
+          res.status(400).json({ error: `Invalid role: ${role}` });
           return;
         }
         data.role = role;
@@ -181,3 +287,4 @@ usersRouter.patch(
     }
   }
 );
+

@@ -71,8 +71,20 @@ export async function apiFetch<T = unknown>(
     (headers as any)["Content-Type"] = "application/json";
   }
 
-  if (auth && accessToken) {
-    (headers as any)["Authorization"] = `Bearer ${accessToken}`;
+  // If this is an authenticated request and we *don't* have a token yet
+  // (e.g. after full page reload), try to bootstrap one via refresh.
+  let tokenToUse = accessToken;
+
+  if (auth && !tokenToUse) {
+    tokenToUse = await refreshAccessToken();
+    if (!tokenToUse) {
+      window.location.href = "/login";
+      throw new Error("Session expired");
+    }
+  }
+
+  if (auth && tokenToUse) {
+    (headers as any)["Authorization"] = `Bearer ${tokenToUse}`;
   }
 
   const url = buildUrl(input as string);
@@ -83,6 +95,7 @@ export async function apiFetch<T = unknown>(
     credentials: rest.credentials ?? "include",
   });
 
+  // If not an auth request, or not a 401, handle normally
   if (!auth || firstResponse.status !== 401) {
     if (!firstResponse.ok) {
       const text = await firstResponse.text();
@@ -96,6 +109,7 @@ export async function apiFetch<T = unknown>(
     return JSON.parse(text) as T;
   }
 
+  // 401 with auth=true: try one more refresh as a fallback.
   const newAccessToken = await refreshAccessToken();
   if (!newAccessToken) {
     window.location.href = "/login";
@@ -792,6 +806,21 @@ export async function getUsersAdmin(): Promise<{
 }> {
   return apiFetch<{ users: AdminUserDto[] }>("/api/users", {
     method: "GET",
+  });
+}
+
+export async function createUserAdmin(payload: {
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: AdminUserDto["role"];
+  initialPassword: string;
+  managerId?: string | null;
+  directorId?: string | null;
+}): Promise<AdminUserDto> {
+  return apiFetch<AdminUserDto>("/api/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

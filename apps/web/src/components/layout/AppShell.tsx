@@ -25,7 +25,7 @@ type Role =
  */
 export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const location = useLocation();
-  const { user } = useAuth() as { user: any | null };
+  const { user, logout } = useAuth();
   const userRole = (user?.role ?? null) as Role | null;
   const userEmail = user?.email ?? "user@example.com";
 
@@ -245,11 +245,48 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+            }}
+          >
+            {/* Quick feedback entry point for pilot users */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const subject = encodeURIComponent(
+                  "Elysium CRM feedback"
+                );
+                const body = encodeURIComponent(
+                  `Hi Elysium team,%0A%0AHere's some feedback from the app:%0A%0A[replace this text with your feedback]%0A%0APath: ${window.location.pathname}`
+                );
+                window.location.href = `mailto:support@elysium-crm.test?subject=${subject}&body=${body}`;
+              }}
+            >
+              Feedback
+            </Button>
+
             {/* Placeholder for future global activity view */}
             <Button variant="ghost" size="sm">
               Activity
             </Button>
+
+            {/* Logout */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void logout().then(() => {
+                  window.location.href = "/login";
+                });
+              }}
+            >
+              Logout
+            </Button>
+
             <div
               style={{
                 display: "flex",

@@ -1,14 +1,34 @@
 // apps/web/src/components/ui/Input.tsx
 import React from "react";
-import { colors, radii, spacing, typography, transitions } from "../../design/tokens";
+import {
+  colors,
+  radii,
+  spacing,
+  typography,
+  transitions,
+} from "../../design/tokens";
 
-export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps
+  extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
   hint?: string;
+  /**
+   * Show a visual indicator that this field is required.
+   * This is purely presentational; use the normal `required`
+   * attribute to enforce HTML validation.
+   */
+  requiredLabel?: boolean;
 }
 
-export const Input: React.FC<InputProps> = ({ label, error, hint, style, ...rest }) => {
+export const Input: React.FC<InputProps> = ({
+  label,
+  error,
+  hint,
+  style,
+  requiredLabel,
+  ...rest
+}) => {
   const hasError = Boolean(error);
 
   return (
@@ -20,9 +40,22 @@ export const Input: React.FC<InputProps> = ({ label, error, hint, style, ...rest
             fontFamily: typography.fontFamily,
             fontSize: typography.fontSize.sm,
             color: colors.textSecondary,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
           }}
         >
-          {label}
+          <span>{label}</span>
+          {requiredLabel && (
+            <span
+              style={{
+                color: colors.danger,
+                fontSize: typography.fontSize.sm,
+              }}
+            >
+              *
+            </span>
+          )}
         </div>
       )}
       <input

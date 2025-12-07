@@ -6,6 +6,7 @@ import React, {
   useState,
   useEffect,
 } from "react";
+import { setAccessToken } from "./apiClient";
 
 type Role =
   | "ADMIN"
@@ -25,6 +26,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   setUser: (user: AuthUser | null) => void;
   isAuthenticated: boolean;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(
@@ -63,10 +65,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [user]);
 
+  const logout = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // ignore network errors on logout
+    } finally {
+      // Clear client-side auth state regardless
+      setAccessToken(null);
+      setUser(null);
+      try {
+        window.localStorage.removeItem("elysium_auth_user");
+      } catch {
+        // ignore
+      }
+    }
+  };
+
   const value: AuthContextValue = {
     user,
     setUser,
     isAuthenticated: !!user,
+    logout,
   };
 
   return (

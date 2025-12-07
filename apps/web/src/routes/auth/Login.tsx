@@ -118,11 +118,20 @@ const LoginPage: React.FC = () => {
             >
               <div
                 style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
                   fontSize: "var(--text-xs)",
                   color: "var(--color-text-soft)",
                 }}
               >
-                Need a new org? <Link to="/signup">Create one</Link>
+                <span>
+                  Need a new org? <Link to="/signup">Create one</Link>
+                </span>
+                <span>
+                  Forgot your password?{" "}
+                  <Link to="/forgot-password">Reset it</Link>
+                </span>
               </div>
 
               <Button

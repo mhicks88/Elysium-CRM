@@ -20,6 +20,9 @@ import CallDetailPage from "./routes/calls/CallDetail";
 import TasksPage from "./routes/tasks/TasksPage";
 import LoginPage from "./routes/auth/Login";
 import SignupOrgPage from "./routes/auth/SignupOrg";
+import ForgotPasswordPage from "./routes/auth/ForgotPassword";
+import ResetPasswordPage from "./routes/auth/ResetPassword";
+import Dashboard from "./routes/dashboard/Dashboard";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -35,8 +38,18 @@ const AppRoutes: React.FC = () => {
       {/* Public auth routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupOrgPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       {/* Protected app routes */}
+      <Route
+        path="/dashboard"
+        element={
+          <RequireAuth>
+            <Dashboard />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/leads"
         element={
@@ -98,8 +111,8 @@ const AppRoutes: React.FC = () => {
       />
 
       {/* Default redirect */}
-      <Route path="/" element={<Navigate to="/leads" replace />} />
-      <Route path="*" element={<Navigate to="/leads" replace />} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 };

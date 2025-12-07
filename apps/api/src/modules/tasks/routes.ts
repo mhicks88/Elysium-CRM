@@ -42,6 +42,7 @@ import {
   type ApiTaskStatus,
 } from "./service";
 import { recordAuditEvent } from "../audit/service";
+import { sendEmail } from "../../lib/emailService";
 
 export const tasksRouter = Router();
 
@@ -318,6 +319,44 @@ tasksRouter.post(
         status: apiStatus,
         dueAt: dueAtDate,
       });
+
+      // If the task is assigned to a user, send an email notification.
+      // In development, this is logged via the emailService console implementation.
+      if (created.assignedToUserId) {
+        const assignee = await prisma.user.findFirst({
+          where: {
+            id: created.assignedToUserId,
+            organizationId,
+          },
+          select: {
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
+        });
+
+        if (assignee?.email) {
+          const assigneeName =
+            [assignee.firstName, assignee.lastName]
+              .filter(Boolean)
+              .join(" ") || assignee.email;
+
+          const dueText = created.dueAt
+            ? `\nDue at: ${created.dueAt.toISOString()}`
+            : "";
+
+          await sendEmail({
+            to: assignee.email,
+            subject: `New task assigned: ${created.title}`,
+            text:
+              `Hi ${assigneeName},\n\n` +
+              `You have been assigned a new task in Elysium CRM.\n\n` +
+              `Title: ${created.title}\n` +
+              `Lead ID: ${created.leadId}${dueText}\n\n` +
+              `Please log in to Elysium CRM to view details and update the status.\n`,
+          });
+        }
+      }
 
       // Audit event
       await recordAuditEvent({
