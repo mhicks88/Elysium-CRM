@@ -415,3 +415,138 @@ export async function getScriptRunsForLead(params: {
   }));
 }
 
+// -----------------------------------------------------------------------------
+// Demo Medicare script helper per org
+// -----------------------------------------------------------------------------
+
+export async function ensureDemoMedicareScriptForOrg(
+  organizationId: string
+): Promise<CallScriptDTO> {
+  // If it already exists for this org, just return it
+  const existing = await prisma.callScript.findFirst({
+    where: {
+      organizationId,
+      name: "Medicare T65 enrollment script (demo)",
+      purpose: "MEDICARE_ENROLLMENT",
+    },
+    include: {
+      nodes: {
+        include: { options: true },
+      },
+    },
+  });
+
+  if (existing) {
+    return {
+      id: existing.id,
+      name: existing.name,
+      purpose: existing.purpose,
+      description: existing.description ?? null,
+      isActive: existing.isActive,
+      entryNodeId: existing.entryNodeId,
+      nodes: existing.nodes.map((n: any) => ({
+        id: n.id,
+        label: n.label,
+        content: n.content,
+        isTerminal: n.isTerminal,
+        options: n.options.map((o: any) => ({
+          id: o.id,
+          label: o.label,
+          nextNodeId: o.nextNodeId,
+        })),
+      })),
+    };
+  }
+
+  // Otherwise, create a new demo script for this org
+  const script = await prisma.callScript.create({
+    data: {
+      organizationId,
+      name: "Medicare T65 enrollment script (demo)",
+      purpose: "MEDICARE_ENROLLMENT",
+      description:
+        "Demo skeleton for Medicare enrollment calls. Replace with CMS-approved language.",
+      isActive: true,
+      entryNodeId: null,
+    },
+  });
+
+  const introNode = await prisma.callScriptNode.create({
+    data: {
+      scriptId: script.id,
+      label: "Intro & permissions",
+      content:
+        "Hi, this is {{AGENT_NAME}} calling about your Medicare options. Before we continue, I need to confirm a few things:\n\n1) You requested information or gave us permission to contact you.\n2) This call may be recorded for quality and compliance.\n3) I’ll review your needs and, if appropriate, discuss plan options available in your area.\n\nDoes that sound okay, and are you ready to continue?",
+      isTerminal: false,
+    },
+  });
+
+  const proceedNode = await prisma.callScriptNode.create({
+    data: {
+      scriptId: script.id,
+      label: "Proceed to needs assessment",
+      content:
+        "Great. Next, I’ll ask a few questions to understand your current coverage, medications, and doctors so we can see which plans may fit your needs.\n\n[ASK NEEDS ASSESSMENT QUESTIONS HERE.]",
+      isTerminal: true,
+    },
+  });
+
+  const notInterestedNode = await prisma.callScriptNode.create({
+    data: {
+      scriptId: script.id,
+      label: "Not interested / ineligible",
+      content:
+        "Thank you for your time today. Based on what you’ve shared, it doesn’t sound like now is the right time to make a change. If your situation changes or you’d like to review your options in the future, you can always contact us.\n\nHave a great day.",
+      isTerminal: true,
+    },
+  });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: introNode.id,
+      label:
+        "Lead confirms consent and is ready to proceed",
+      nextNodeId: proceedNode.id,
+    },
+  });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: introNode.id,
+      label:
+        "Lead is not interested / not eligible / declines",
+      nextNodeId: notInterestedNode.id,
+    },
+  });
+
+  const updatedScript = await prisma.callScript.update({
+    where: { id: script.id },
+    data: {
+      entryNodeId: introNode.id,
+    },
+    include: {
+      nodes: { include: { options: true } },
+    },
+  });
+
+  return {
+    id: updatedScript.id,
+    name: updatedScript.name,
+    purpose: updatedScript.purpose,
+    description: updatedScript.description ?? null,
+    isActive: updatedScript.isActive,
+    entryNodeId: updatedScript.entryNodeId,
+    nodes: updatedScript.nodes.map((n: any) => ({
+      id: n.id,
+      label: n.label,
+      content: n.content,
+      isTerminal: n.isTerminal,
+      options: n.options.map((o: any) => ({
+        id: o.id,
+        label: o.label,
+        nextNodeId: o.nextNodeId,
+      })),
+    })),
+  };
+}
+

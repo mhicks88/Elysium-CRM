@@ -18,6 +18,7 @@ import {
   stepScriptRun,
   endScriptRun,
   getScriptRunsForLead,
+  ensureDemoMedicareScriptForOrg,
 } from "./service";
 import { recordAuditEvent } from "../audit/service";
 import { runPreCallChecks } from "../compliance/preCallComplianceService";
@@ -46,6 +47,25 @@ callScriptsRouter.get(
       });
 
       return res.json({ scripts });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+/**
+ * POST /api/call-scripts/seed-demo
+ *
+ * Temporary helper to seed the demo Medicare script for the
+ * currently logged-in user's organization.
+ */
+callScriptsRouter.post(
+  "/seed-demo",
+  requireAuth,
+  async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const orgId = req.user!.organizationId;
+      const script = await ensureDemoMedicareScriptForOrg(orgId);
+      return res.json({ script });
     } catch (err) {
       next(err);
     }
@@ -94,11 +114,10 @@ callScriptsRouter.get(
  *     "purpose": "MARKETING"         // used for compliance + optional script resolution
  *   }
  *
- * Infra behavior:
- * - Requires leadId and either scriptId or purpose
- * - Runs pre-call compliance via runPreCallChecks
- * - If FAIL → 400 with { error, compliance }
- * - If PASS → records compliance audit/history and starts script run
+ * Behavior:
+ * - Requires leadId and at least one of scriptId or purpose
+ * - If scriptId is provided but purpose is missing, infer purpose from the script
+ * - Runs pre-call compliance using that purpose
  */
 callScriptsRouter.post(
   "/start",
@@ -107,7 +126,8 @@ callScriptsRouter.post(
     try {
       const orgId = req.user!.organizationId;
       const userId = req.user!.id;
-      const { leadId, scriptId, purpose } = req.body ?? {};
+      const { leadId, scriptId, purpose: rawPurpose } =
+        req.body ?? {};
 
       if (!leadId) {
         return res
@@ -115,31 +135,56 @@ callScriptsRouter.post(
           .json({ error: "leadId is required" });
       }
 
-      if (
-        (typeof scriptId !== "string" ||
-          scriptId.length === 0) &&
-        (typeof purpose !== "string" ||
-          purpose.length === 0)
-      ) {
+      const hasScriptId =
+        typeof scriptId === "string" &&
+        scriptId.trim().length > 0;
+
+      let purpose: string | undefined =
+        typeof rawPurpose === "string" &&
+        rawPurpose.trim().length > 0
+          ? rawPurpose.trim()
+          : undefined;
+
+      // Must have at least one of scriptId or purpose
+      if (!hasScriptId && !purpose) {
         return res.status(400).json({
           error:
             "Either scriptId or purpose is required to start a scripted call",
         });
       }
 
-      if (typeof purpose !== "string" || purpose.length === 0) {
-        // For now we *require* a purpose for compliance purposes.
+      // If we have a scriptId but no purpose, infer purpose from the script
+      if (hasScriptId && !purpose) {
+        const script = await getScriptById({
+          organizationId: orgId,
+          scriptId: scriptId.trim(),
+        });
+
+        if (!script) {
+          return res.status(400).json({
+            error:
+              "Script not found for this organization; cannot infer purpose",
+          });
+        }
+
+        purpose = script.purpose;
+      }
+
+      if (!purpose) {
+        // Should be impossible now, but guard anyway
         return res.status(400).json({
           error:
             "purpose is required to start a scripted call",
         });
       }
 
+      const normalizedPurpose = purpose;
+
       // 1️⃣ Run pre-call compliance checks for this lead + purpose.
       const complianceResult = await runPreCallChecks({
         leadId,
         agentUserId: userId,
-        purpose: purpose as any,
+        purpose: normalizedPurpose as any,
         callSessionId: undefined,
       });
 
@@ -150,7 +195,7 @@ callScriptsRouter.post(
         eventType:
           "COMPLIANCE_CHECK_BEFORE_SCRIPT",
         eventData: {
-          purpose,
+          purpose: normalizedPurpose,
           result: complianceResult,
         },
       });
@@ -159,8 +204,8 @@ callScriptsRouter.post(
       await recordComplianceCheck({
         leadId,
         userId,
-        purpose,
-        status: complianceResult.status, // PASS / FAIL
+        purpose: normalizedPurpose,
+        status: complianceResult.status,
         result: complianceResult,
       });
 
@@ -173,18 +218,19 @@ callScriptsRouter.post(
         });
       }
 
-      // 2️⃣ Resolve which script to use (same behavior as before).
+      // 2️⃣ Resolve which script to use.
       let scriptIdToUse: string | null = null;
+      let scriptForAuditId: string | null = null;
+      let scriptForAuditPurpose: string | null = null;
 
-      if (
-        typeof scriptId === "string" &&
-        scriptId.length > 0
-      ) {
-        scriptIdToUse = scriptId;
+      if (hasScriptId) {
+        scriptIdToUse = scriptId.trim();
+        scriptForAuditId = scriptIdToUse;
+        scriptForAuditPurpose = normalizedPurpose;
       } else {
         const script = await resolveScriptForPurpose({
           organizationId: orgId,
-          purpose,
+          purpose: normalizedPurpose,
         });
         if (!script) {
           return res.status(400).json({
@@ -193,12 +239,14 @@ callScriptsRouter.post(
           });
         }
         scriptIdToUse = script.id;
+        scriptForAuditId = script.id;
+        scriptForAuditPurpose = script.purpose;
       }
 
       const { runId, script, currentNode } =
         await startScriptRun({
           organizationId: orgId,
-          scriptId: scriptIdToUse,
+          scriptId: scriptIdToUse!,
           leadId,
           agentId: userId,
         });
@@ -210,8 +258,8 @@ callScriptsRouter.post(
         eventType: "CALL_SCRIPT_RUN_STARTED",
         eventData: {
           runId,
-          scriptId: script.id,
-          purpose: script.purpose,
+          scriptId: scriptForAuditId,
+          purpose: scriptForAuditPurpose,
         },
       });
 

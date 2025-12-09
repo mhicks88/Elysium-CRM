@@ -10,7 +10,7 @@ import {
 import { AuthProvider, useAuth } from "./lib/auth";
 
 // Route components
-import LeadsIndex from "./routes/leads";
+import LeadsPage from "./routes/leads/Leads";
 import LeadDetailPage from "./routes/leads/LeadDetail";
 import NewLeadPage from "./routes/leads/NewLead";
 import AdminPage from "./routes/admin/Admin";
@@ -50,14 +50,18 @@ const AppRoutes: React.FC = () => {
           </RequireAuth>
         }
       />
+
+      {/* Leads list */}
       <Route
         path="/leads"
         element={
           <RequireAuth>
-            <LeadsIndex />
+            <LeadsPage />
           </RequireAuth>
         }
       />
+
+      {/* New lead */}
       <Route
         path="/leads/new"
         element={
@@ -66,6 +70,8 @@ const AppRoutes: React.FC = () => {
           </RequireAuth>
         }
       />
+
+      {/* Lead detail */}
       <Route
         path="/leads/:id"
         element={

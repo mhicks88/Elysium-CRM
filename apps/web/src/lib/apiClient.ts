@@ -4,7 +4,7 @@ import type {
 } from "@elysium-crm/shared-types/dto/compliance";
 
 // Base URL for the API – configured via Vite env
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
 // Helper to build full URLs
 function buildUrl(path: string): string {

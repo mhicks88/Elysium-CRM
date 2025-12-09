@@ -3,6 +3,7 @@
 // DB-backed Enrollment Journey service using Prisma EnrollmentJourney model.
 
 import { prisma } from "../../db/client";
+import type { $Enums } from "@prisma/client";
 import {
   Enrollment,
   EnrollmentStage,
@@ -41,11 +42,33 @@ export async function getEnrollmentForLead(
 }
 
 /**
+ * Map an enrollment stage to a lead "status" (for the main leads list),
+ * or null if we don't want to touch the lead status for that stage.
+ *
+ * We keep this conservative for now:
+ * - ENROLLED   → Lead.status = ENROLLED
+ * - WITHDRAWN  → Lead.status = DO_NOT_CONTACT (closed out)
+ */
+function inferLeadStatusFromStage(
+  stage: EnrollmentStage
+): $Enums.LeadStatus | null {
+  switch (stage) {
+    case "ENROLLED":
+      return "ENROLLED";
+    case "WITHDRAWN":
+      return "DO_NOT_CONTACT";
+    default:
+      return null;
+  }
+}
+
+/**
  * Upsert enrollment journey for a lead.
  *
  * We:
  * - Ensure the lead exists AND belongs to this organization
  * - Create or update the EnrollmentJourney row for that lead
+ * - Optionally update the lead.status based on the enrollment stage
  * - Optionally track who updated it via updatedByUserId (future enhancement)
  */
 export async function upsertEnrollmentForLead(
@@ -80,7 +103,7 @@ export async function upsertEnrollmentForLead(
     },
   });
 
-  const stage = input.stage as any; // matches EnrollmentJourneyStage enum values
+  const stage = input.stage as EnrollmentStage; // matches EnrollmentJourneyStage enum values
   const notes = input.notes ?? null;
 
   let saved;
@@ -101,6 +124,31 @@ export async function upsertEnrollmentForLead(
         notes,
       },
     });
+  }
+
+  // Keep the Lead's high-level status in sync with key enrollment stages
+  const inferredLeadStatus = inferLeadStatusFromStage(stage);
+  if (inferredLeadStatus) {
+    try {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          status: inferredLeadStatus,
+        },
+      });
+    } catch (err) {
+      // Don't fail the enrollment operation if the status sync fails;
+      // log and continue. You can tighten this later if needed.
+      console.error(
+        "Failed to sync enrollment stage to lead status",
+        {
+          leadId: lead.id,
+          stage,
+          inferredLeadStatus,
+          error: String(err),
+        }
+      );
+    }
   }
 
   return {

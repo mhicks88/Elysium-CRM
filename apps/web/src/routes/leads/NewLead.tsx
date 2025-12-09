@@ -7,11 +7,14 @@ import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { createLead } from "../../lib/apiClient";
+import { useAuth } from "../../lib/auth";
 
 type LeadStatus = "NEW" | "IN_PROGRESS" | "ENROLLED" | "DO_NOT_CONTACT";
 
 const NewLeadPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth() as { user: any | null };
+  const currentUserId = user?.id ?? null;
 
   const [firstName, setFirstName] = useState<string>("");
   const [lastName, setLastName] = useState<string>("");
@@ -52,6 +55,11 @@ const NewLeadPage: React.FC = () => {
         // Send raw YYYY-MM-DD string; backend will parse or fall back.
         dateOfBirth: dob.trim() || null,
       };
+
+      // IMPORTANT: assign new lead to current user so AGENT visibility works
+      if (currentUserId) {
+        payload.assignedToId = currentUserId;
+      }
 
       const created = await createLead(payload);
 
@@ -198,7 +206,6 @@ const NewLeadPage: React.FC = () => {
                 placeholder="YYYY-MM-DD"
                 value={dob}
                 onChange={(e) => setDob(e.target.value)}
-                // assuming Input passes type through to underlying input
                 type="date"
               />
             </div>

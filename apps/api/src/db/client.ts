@@ -1,3 +1,4 @@
+console.log("DATABASE_URL (local):", process.env.DATABASE_URL);
 import { PrismaClient } from '@prisma/client';
 import { env } from '../config/env';
 

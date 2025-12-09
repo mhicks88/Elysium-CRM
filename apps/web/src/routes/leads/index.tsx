@@ -28,14 +28,6 @@ type LeadStatusGroup =
   | "ENROLLED"
   | "DO_NOT_CONTACT";
 
-type Role =
-  | "ADMIN"
-  | "AGENT"
-  | "VIEW_ONLY"
-  | "MANAGER"
-  | "DIRECTOR"
-  | "COMPLIANCE_OFFICER";
-
 interface LeadListItem {
   id: string;
   firstName: string;
@@ -151,14 +143,10 @@ const LeadsIndex: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth() as { user: any | null };
   const currentUserId = user?.id ?? null;
-  const userRole = (user?.role ?? null) as Role | null;
 
-  // Frontend RBAC: who can mutate leads?
-  const canWriteLeads =
-    userRole === "ADMIN" ||
-    userRole === "MANAGER" ||
-    userRole === "DIRECTOR" ||
-    userRole === "AGENT";
+  // For now, always allow "New lead" in the UI.
+  // Backend still enforces roles on POST /api/leads, so security is preserved.
+  const canWriteLeads = true;
 
   const [leads, setLeads] = useState<LeadListItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
