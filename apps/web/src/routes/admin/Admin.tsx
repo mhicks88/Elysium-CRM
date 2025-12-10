@@ -385,11 +385,35 @@ const Admin: React.FC = () => {
       setNewUserPassword("");
     } catch (err: any) {
       setUsersError(
-        err?.message ?? "Failed to create user. Check details and try again."
+        err?.message ??
+          "Failed to create user. Check details and try again."
       );
     } finally {
       setCreatingUser(false);
     }
+  }
+
+  // Helper lists for manager/director dropdowns
+  const managerCandidates = users.filter((u) =>
+    ["ADMIN", "MANAGER", "DIRECTOR", "COMPLIANCE"].includes(
+      u.role
+    )
+  );
+
+  const directorCandidates = users.filter((u) =>
+    ["ADMIN", "DIRECTOR"].includes(u.role)
+  );
+
+  function userLabel(u: AdminUserDto): string {
+    const name = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
+    return name
+      ? `${name} (${u.email})`
+      : u.email ?? u.id;
+  }
+
+  function findUser(id: string | null | undefined): AdminUserDto | undefined {
+    if (!id) return undefined;
+    return users.find((u) => u.id === id);
   }
 
   // === Scripts tab logic ===
@@ -619,7 +643,9 @@ const Admin: React.FC = () => {
                       label="To date"
                       type="date"
                       value={toDate}
-                      onChange={(e) => setToDate(e.target.value)}
+                      onChange={(e) =>
+                        setToDate(e.target.value)
+                      }
                     />
                     <Input
                       label="Filter agents"
@@ -1589,7 +1615,9 @@ const Admin: React.FC = () => {
                           size="xs"
                           type="submit"
                           isLoading={creatingUser}
-                          disabled={!newUserCanSubmit || creatingUser}
+                          disabled={
+                            !newUserCanSubmit || creatingUser
+                          }
                         >
                           Create user
                         </Button>
@@ -1678,10 +1706,10 @@ const Admin: React.FC = () => {
                               Role
                             </th>
                             <th style={{ padding: "0.5rem" }}>
-                              ManagerId
+                              Manager
                             </th>
                             <th style={{ padding: "0.5rem" }}>
-                              DirectorId
+                              Director
                             </th>
                             <th style={{ padding: "0.5rem" }}>
                               Active
@@ -1699,6 +1727,13 @@ const Admin: React.FC = () => {
                               isEditing && editDraft
                                 ? editDraft
                                 : u;
+                            const managerUser = findUser(
+                              u.managerId
+                            );
+                            const directorUser = findUser(
+                              u.directorId
+                            );
+
                             return (
                               <tr
                                 key={u.id}
@@ -1771,52 +1806,101 @@ const Admin: React.FC = () => {
                                     </Badge>
                                   )}
                                 </td>
+                                {/* Manager */}
                                 <td
                                   style={{
                                     padding: "0.5rem",
                                   }}
                                 >
                                   {isEditing ? (
-                                    <Input
-                                      label=""
+                                    <select
                                       value={
-                                        draft.managerId ??
-                                        ""
+                                        draft.managerId ?? ""
                                       }
                                       onChange={(e) =>
                                         updateDraft(
                                           "managerId",
-                                          e.target.value
+                                          (e.target.value ||
+                                            null) as any
                                         )
                                       }
-                                    />
+                                      style={{
+                                        fontSize:
+                                          "var(--text-xs)",
+                                        maxWidth:
+                                          "16rem",
+                                      }}
+                                    >
+                                      <option value="">
+                                        — None —
+                                      </option>
+                                      {managerCandidates.map(
+                                        (m) => (
+                                          <option
+                                            key={m.id}
+                                            value={m.id}
+                                          >
+                                            {userLabel(m)}
+                                          </option>
+                                        )
+                                      )}
+                                    </select>
+                                  ) : managerUser ? (
+                                    userLabel(managerUser)
+                                  ) : u.managerId ? (
+                                    u.managerId
                                   ) : (
-                                    u.managerId ?? "—"
+                                    "—"
                                   )}
                                 </td>
+                                {/* Director */}
                                 <td
                                   style={{
                                     padding: "0.5rem",
                                   }}
                                 >
                                   {isEditing ? (
-                                    <Input
-                                      label=""
+                                    <select
                                       value={
-                                        draft.directorId ??
-                                        ""
+                                        draft.directorId ?? ""
                                       }
                                       onChange={(e) =>
                                         updateDraft(
                                           "directorId",
-                                          e.target.value
+                                          (e.target.value ||
+                                            null) as any
                                         )
                                       }
-                                    />
+                                      style={{
+                                        fontSize:
+                                          "var(--text-xs)",
+                                        maxWidth:
+                                          "16rem",
+                                      }}
+                                    >
+                                      <option value="">
+                                        — None —
+                                      </option>
+                                      {directorCandidates.map(
+                                        (d) => (
+                                          <option
+                                            key={d.id}
+                                            value={d.id}
+                                          >
+                                            {userLabel(d)}
+                                          </option>
+                                        )
+                                      )}
+                                    </select>
+                                  ) : directorUser ? (
+                                    userLabel(directorUser)
+                                  ) : u.directorId ? (
+                                    u.directorId
                                   ) : (
-                                    u.directorId ?? "—"
+                                    "—"
                                   )}
                                 </td>
+                                {/* Active */}
                                 <td
                                   style={{
                                     padding: "0.5rem",
@@ -1831,7 +1915,7 @@ const Admin: React.FC = () => {
                                       onChange={(e) =>
                                         updateDraft(
                                           "isActive",
-                                          e.target.checked
+                                          e.target.checked as any
                                         )
                                       }
                                     />
@@ -1849,6 +1933,7 @@ const Admin: React.FC = () => {
                                     </Badge>
                                   )}
                                 </td>
+                                {/* Actions */}
                                 <td
                                   style={{
                                     padding: "0.5rem",
@@ -2370,4 +2455,3 @@ async function fetchRecentFailuresWithFilters(
     method: "GET",
   });
 }
-

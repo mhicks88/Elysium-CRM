@@ -353,11 +353,231 @@ async function main() {
     },
   });
 
-  // Set the entry node
+  // Set the entry node for the Medicare script
   await prisma.callScript.update({
     where: { id: medicareCallScript.id },
     data: {
       entryNodeId: introNode.id,
+    },
+  });
+
+  // ---------------------------------------------------------------------------
+  // Additional demo interactive call scripts
+  // ---------------------------------------------------------------------------
+
+  // 1) Warm intro: new Medicare lead
+  const warmIntroScript = await prisma.callScript.upsert({
+    where: { id: "demo-warm-intro-script" },
+    update: {
+      organizationId: org.id,
+    },
+    create: {
+      id: "demo-warm-intro-script",
+      organizationId: org.id,
+      name: "Warm intro: new Medicare lead",
+      purpose: "T65_WARM_INTRO",
+      description:
+        "Outbound warm introduction for newly referred Medicare leads.",
+      isActive: true,
+      entryNodeId: null,
+    },
+  });
+
+  const warmIntroNode = await prisma.callScriptNode.create({
+    data: {
+      scriptId: warmIntroScript.id,
+      label: "Warm intro & permission",
+      content:
+        "Hi, this is {{AGENT_NAME}} with {{ORG_NAME}}. You were recently referred to us to review your Medicare options.\n\nBefore we get started, I need to confirm:\n\n1) You’re the person we have on file, and you’re comfortable talking now.\n2) You’re giving permission to talk about Medicare plan options on this call.\n\nIs now still a good time to talk?",
+      isTerminal: false,
+    },
+  });
+
+  const warmIntroNextStepsNode =
+    await prisma.callScriptNode.create({
+      data: {
+        scriptId: warmIntroScript.id,
+        label: "Transition to needs assessment / follow-up",
+        content:
+          "Great. Next, we’ll review your current coverage, doctors, and medications so we can see which options may fit you best.\n\n[Use your standard discovery questions here.]\n\nIf at any point this doesn’t seem like a fit, tell me and we’ll stop.",
+        isTerminal: true,
+      },
+    });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: warmIntroNode.id,
+      label:
+        "Lead is ready and gives permission to discuss options",
+      nextNodeId: warmIntroNextStepsNode.id,
+    },
+  });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: warmIntroNode.id,
+      label:
+        "Lead is busy / not ready – set follow-up instead of continuing",
+      nextNodeId: null,
+    },
+  });
+
+  await prisma.callScript.update({
+    where: { id: warmIntroScript.id },
+    data: {
+      entryNodeId: warmIntroNode.id,
+    },
+  });
+
+  // 2) Annual Medicare plan review
+  const annualReviewScript =
+    await prisma.callScript.upsert({
+      where: { id: "demo-annual-review-script" },
+      update: {
+        organizationId: org.id,
+      },
+      create: {
+        id: "demo-annual-review-script",
+        organizationId: org.id,
+        name: "Annual Medicare plan review (demo)",
+        purpose: "ANNUAL_REVIEW",
+        description:
+          "Framework for annual member check-in and benefit review.",
+        isActive: true,
+        entryNodeId: null,
+      },
+    });
+
+  const annualIntroNode = await prisma.callScriptNode.create({
+    data: {
+      scriptId: annualReviewScript.id,
+      label: "Annual review intro",
+      content:
+        "Hi, this is {{AGENT_NAME}} with {{ORG_NAME}}. I’m calling for your annual Medicare plan review.\n\nThe goal today is to:\n\n• Confirm your doctors and prescriptions are still correct.\n• Check if your current plan still fits your needs.\n• See whether any new options might be a better fit.\n\nIs it okay if we spend a few minutes reviewing your current situation?",
+      isTerminal: false,
+    },
+  });
+
+  const annualProceedNode =
+    await prisma.callScriptNode.create({
+      data: {
+        scriptId: annualReviewScript.id,
+        label: "Coverage review",
+        content:
+          "Perfect. Let’s walk through a quick checklist:\n\n1) Are you seeing any new doctors or specialists this year?\n2) Have there been any changes to your prescriptions or dosage?\n3) Have your monthly costs (premiums, copays, or pharmacy) become hard to manage?\n\n[Document key changes and confirm whether a plan review or change is appropriate under current rules.]",
+        isTerminal: true,
+      },
+    });
+
+  const annualNoChangeNode =
+    await prisma.callScriptNode.create({
+      data: {
+        scriptId: annualReviewScript.id,
+        label: "No changes / keep current plan",
+        content:
+          "Based on what you’ve shared, your current plan still appears to fit your doctors, medications, and budget.\n\nWe’ll keep your coverage as-is. If anything changes—new prescriptions, new doctors, or cost concerns—reach out so we can review again.",
+        isTerminal: true,
+      },
+    });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: annualIntroNode.id,
+      label:
+        "Member has changes to doctors/meds/costs – review options",
+      nextNodeId: annualProceedNode.id,
+    },
+  });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: annualIntroNode.id,
+      label:
+        "No major changes – confirm current plan still fits",
+      nextNodeId: annualNoChangeNode.id,
+    },
+  });
+
+  await prisma.callScript.update({
+    where: { id: annualReviewScript.id },
+    data: {
+      entryNodeId: annualIntroNode.id,
+    },
+  });
+
+  // 3) Post-enrollment welcome & check-in
+  const postEnrollmentScript =
+    await prisma.callScript.upsert({
+      where: { id: "demo-post-enrollment-script" },
+      update: {
+        organizationId: org.id,
+      },
+      create: {
+        id: "demo-post-enrollment-script",
+        organizationId: org.id,
+        name: "Post-enrollment welcome & check-in (demo)",
+        purpose: "POST_ENROLLMENT_FOLLOWUP",
+        description:
+          "Short follow-up script after a new enrollment to confirm understanding and next steps.",
+        isActive: true,
+        entryNodeId: null,
+      },
+    });
+
+  const postWelcomeNode = await prisma.callScriptNode.create({
+    data: {
+      scriptId: postEnrollmentScript.id,
+      label: "Welcome & confirmation",
+      content:
+        "Hi, this is {{AGENT_NAME}} with {{ORG_NAME}}. I’m following up on your recent Medicare enrollment to make sure everything is clear and you know what to expect.\n\nFirst, I want to confirm you received your plan materials or card, or at least know when to expect them.",
+      isTerminal: false,
+    },
+  });
+
+  const postEducationNode =
+    await prisma.callScriptNode.create({
+      data: {
+        scriptId: postEnrollmentScript.id,
+        label: "Education & next steps",
+        content:
+          "Great. A couple of quick reminders:\n\n• Bring your new card to your doctor and pharmacy once it’s active.\n• Call the plan’s member services number for questions about bills or benefits.\n• If anything doesn’t look right or you have trouble using benefits, call us and we’ll help you review.\n\nIs there anything about your new coverage that feels unclear or worrying right now?",
+        isTerminal: true,
+      },
+    });
+
+  const postIssuesNode =
+    await prisma.callScriptNode.create({
+      data: {
+        scriptId: postEnrollmentScript.id,
+        label: "Issues or concerns",
+        content:
+          "Thanks for letting me know. Let’s talk through that concern and see whether it’s a normal part of how the plan works or something we need to escalate.\n\n[Document issue, timelines, and any follow-up actions in your CRM or task system.]",
+        isTerminal: true,
+      },
+    });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: postWelcomeNode.id,
+      label:
+        "Member has received materials / understands timing",
+      nextNodeId: postEducationNode.id,
+    },
+  });
+
+  await prisma.callScriptOption.create({
+    data: {
+      nodeId: postWelcomeNode.id,
+      label:
+        "Member is confused, missing materials, or has concerns",
+      nextNodeId: postIssuesNode.id,
+    },
+  });
+
+  await prisma.callScript.update({
+    where: { id: postEnrollmentScript.id },
+    data: {
+      entryNodeId: postWelcomeNode.id,
     },
   });
 }

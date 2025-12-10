@@ -106,9 +106,7 @@ function callStatusVariant(status: string): "success" | "warning" | "danger" {
   return "warning";
 }
 
-function callComplianceVariant(
-  state: string
-): "success" | "warning" | "danger" {
+function callComplianceVariant(state: string): "success" | "warning" | "danger" {
   if (state === "PRE_CALL_CHECKS_PASSED") return "success";
   if (state === "PRE_CALL_CHECKS_FAILED") return "danger";
   return "warning";
@@ -129,12 +127,9 @@ const LeadDetailPage: React.FC = () => {
   const { user } = useAuth() as { user: any | null };
   const userRole = (user?.role ?? null) as Role | null;
 
-  const readOnlyRole =
-    userRole === "VIEW_ONLY" || userRole === "COMPLIANCE_OFFICER";
+  const readOnlyRole = userRole === "VIEW_ONLY" || userRole === "COMPLIANCE_OFFICER";
   const canEditAssigneeRole =
-    userRole === "ADMIN" ||
-    userRole === "MANAGER" ||
-    userRole === "DIRECTOR";
+    userRole === "ADMIN" || userRole === "MANAGER" || userRole === "DIRECTOR";
   const canEditLead = !readOnlyRole;
 
   const canEditAssignee = canEditAssigneeRole;
@@ -156,28 +151,24 @@ const LeadDetailPage: React.FC = () => {
 
   // Calls for this lead
   const [calls, setCalls] = useState<CallSessionDto[]>([]);
-  const [callsLoading, setCallsLoading] =
-    useState<boolean>(false);
+  const [callsLoading, setCallsLoading] = useState<boolean>(false);
   const [callsError, setCallsError] = useState<string | null>(null);
 
   // Log call form state
-  const [newCallDirection, setNewCallDirection] = useState<
-    "INBOUND" | "OUTBOUND"
-  >("OUTBOUND");
+  const [newCallDirection, setNewCallDirection] = useState<"INBOUND" | "OUTBOUND">(
+    "OUTBOUND"
+  );
   const [newCallPurpose, setNewCallPurpose] = useState<
     "EDUCATION" | "MARKETING" | "ENROLLMENT" | "SERVICE"
   >("ENROLLMENT");
   const [newCallStatus, setNewCallStatus] = useState<
     "COMPLETED" | "FAILED" | "ABANDONED"
   >("COMPLETED");
-  const [logCallLoading, setLogCallLoading] =
-    useState<boolean>(false);
-  const [logCallError, setLogCallError] =
-    useState<string | null>(null);
+  const [logCallLoading, setLogCallLoading] = useState<boolean>(false);
+  const [logCallError, setLogCallError] = useState<string | null>(null);
 
   // Next lead flow
-  const [nextLoading, setNextLoading] =
-    useState<boolean>(false);
+  const [nextLoading, setNextLoading] = useState<boolean>(false);
   const [nextError, setNextError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -216,9 +207,7 @@ const LeadDetailPage: React.FC = () => {
         setCalls(res.calls || []);
       } catch (err: any) {
         if (!mounted) return;
-        setCallsError(
-          err?.message ?? "Failed to load calls for this lead"
-        );
+        setCallsError(err?.message ?? "Failed to load calls for this lead");
       } finally {
         if (mounted) setCallsLoading(false);
       }
@@ -240,8 +229,7 @@ const LeadDetailPage: React.FC = () => {
       (editEmail || "") !== (lead.email || "") ||
       (editPhone || "") !== (lead.phone || "") ||
       (editState || "") !== (lead.state || "") ||
-      (canEditAssignee &&
-        (editAssignee || "") !== (lead.assignedToUserId || "")));
+      (canEditAssignee && (editAssignee || "") !== (lead.assignedToUserId || "")));
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -369,9 +357,9 @@ const LeadDetailPage: React.FC = () => {
               color: "var(--color-text-soft)",
             }}
           >
-            This lead is marked as DO NOT CONTACT. Outbound calls and
-            marketing outreach should not be initiated without formal
-            remediation and legal approval.
+            This lead is marked as DO NOT CONTACT. Outbound calls and marketing
+            outreach should not be initiated without formal remediation and
+            legal approval.
           </span>
         </div>
       );
@@ -446,6 +434,11 @@ const LeadDetailPage: React.FC = () => {
       </div>
     );
   }
+
+  // IDs for accessibility on the log-call form selects
+  const directionSelectId = "log-call-direction";
+  const purposeSelectId = "log-call-purpose";
+  const outcomeSelectId = "log-call-outcome";
 
   return (
     <AppShell>
@@ -577,215 +570,184 @@ const LeadDetailPage: React.FC = () => {
             {/* Contact compliance banner */}
             {renderContactComplianceBanner(lead)}
 
-            {/* Main two-column layout */}
+            {/* Unified grid layout for all lead panels */}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns:
-                  "minmax(0, 1.4fr) minmax(0, 1fr)",
+                gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)",
                 gap: "var(--space-4)",
                 alignItems: "flex-start",
               }}
             >
-              {/* Left: lead info */}
-              <Card
-                title="Lead information"
-                description="Core contact, assignment, and status for this lead."
-                actions={
-                  canEditLead && (
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "0.5rem",
-                        alignItems: "center",
-                      }}
-                    >
-                      {isEditing ? (
-                        <>
+              {/* Row 1: Lead info (left) + Pre-call (right) */}
+              <div style={{ gridColumn: "1 / 2" }}>
+                <Card
+                  title="Lead information"
+                  description="Core contact, assignment, and status for this lead."
+                  actions={
+                    canEditLead && (
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "0.5rem",
+                          alignItems: "center",
+                        }}
+                      >
+                        {isEditing ? (
+                          <>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={saving}
+                              onClick={handleCancelEdit}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              isLoading={saving}
+                              disabled={saving || !hasEdits}
+                              onClick={handleSave}
+                            >
+                              Save changes
+                            </Button>
+                          </>
+                        ) : (
                           <Button
                             variant="secondary"
                             size="sm"
-                            disabled={saving}
-                            onClick={handleCancelEdit}
+                            onClick={() => setIsEditing(true)}
                           >
-                            Cancel
+                            Edit
                           </Button>
-                          <Button
-                            size="sm"
-                            isLoading={saving}
-                            disabled={saving || !hasEdits}
-                            onClick={handleSave}
-                          >
-                            Save changes
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setIsEditing(true)}
-                        >
-                          Edit
-                        </Button>
-                      )}
+                        )}
+                      </div>
+                    )
+                  }
+                >
+                  {saveError && (
+                    <div
+                      style={{
+                        marginBottom: "var(--space-3)",
+                        fontSize: "var(--text-sm)",
+                        color: "var(--color-danger)",
+                      }}
+                    >
+                      {saveError}
                     </div>
-                  )
-                }
-              >
-                {saveError && (
-                  <div
+                  )}
+
+                  <form
+                    onSubmit={handleSave}
                     style={{
-                      marginBottom: "var(--space-3)",
-                      fontSize: "var(--text-sm)",
-                      color: "var(--color-danger)",
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: "var(--space-4)",
                     }}
                   >
-                    {saveError}
-                  </div>
-                )}
+                    <Input
+                      label="First name"
+                      value={isEditing ? editFirstName : lead.firstName}
+                      onChange={(e) => setEditFirstName(e.target.value)}
+                      readOnly={!isEditing || !canEditLead}
+                    />
+                    <Input
+                      label="Last name"
+                      value={isEditing ? editLastName : lead.lastName}
+                      onChange={(e) => setEditLastName(e.target.value)}
+                      readOnly={!isEditing || !canEditLead}
+                    />
+                    <Input
+                      label="Email"
+                      value={isEditing ? editEmail : lead.email ?? ""}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      readOnly={!isEditing || !canEditLead}
+                    />
+                    <Input
+                      label="Phone"
+                      value={isEditing ? editPhone : lead.phone ?? ""}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      readOnly={!isEditing || !canEditLead}
+                    />
+                    <Input
+                      label="State"
+                      value={isEditing ? editState : lead.state ?? ""}
+                      onChange={(e) => setEditState(e.target.value)}
+                      readOnly={!isEditing || !canEditLead}
+                    />
+                    <Input label="Status" value={statusLabel[lead.status]} readOnly />
+                    <Input
+                      label="Assigned to (userId)"
+                      value={isEditing ? editAssignee : lead.assignedToUserId ?? ""}
+                      onChange={(e) => setEditAssignee(e.target.value)}
+                      readOnly={!isEditing || !canEditAssignee}
+                      hint={
+                        canEditAssignee
+                          ? lead.assignedToName
+                            ? `Currently assigned to: ${lead.assignedToName}. Change by userId.`
+                            : "Assign this lead to an agent by userId."
+                          : "Only admins, directors, and managers can change assignment."
+                      }
+                    />
+                  </form>
 
-                <form
-                  onSubmit={handleSave}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(2, minmax(0, 1fr))",
-                    gap: "var(--space-4)",
-                  }}
-                >
-                  <Input
-                    label="First name"
-                    value={
-                      isEditing ? editFirstName : lead.firstName
-                    }
-                    onChange={(e) =>
-                      setEditFirstName(e.target.value)
-                    }
-                    readOnly={!isEditing || !canEditLead}
-                  />
-                  <Input
-                    label="Last name"
-                    value={
-                      isEditing ? editLastName : lead.lastName
-                    }
-                    onChange={(e) =>
-                      setEditLastName(e.target.value)
-                    }
-                    readOnly={!isEditing || !canEditLead}
-                  />
-                  <Input
-                    label="Email"
-                    value={isEditing ? editEmail : lead.email ?? ""}
-                    onChange={(e) =>
-                      setEditEmail(e.target.value)
-                    }
-                    readOnly={!isEditing || !canEditLead}
-                  />
-                  <Input
-                    label="Phone"
-                    value={isEditing ? editPhone : lead.phone ?? ""}
-                    onChange={(e) =>
-                      setEditPhone(e.target.value)
-                    }
-                    readOnly={!isEditing || !canEditLead}
-                  />
-                  <Input
-                    label="State"
-                    value={isEditing ? editState : lead.state ?? ""}
-                    onChange={(e) =>
-                      setEditState(e.target.value)
-                    }
-                    readOnly={!isEditing || !canEditLead}
-                  />
-                  <Input
-                    label="Status"
-                    value={statusLabel[lead.status]}
-                    readOnly
-                  />
-                  <Input
-                    label="Assigned to (userId)"
-                    value={
-                      isEditing
-                        ? editAssignee
-                        : lead.assignedToUserId ?? ""
-                    }
-                    onChange={(e) =>
-                      setEditAssignee(e.target.value)
-                    }
-                    readOnly={!isEditing || !canEditAssignee}
-                    hint={
-                      canEditAssignee
-                        ? lead.assignedToName
-                          ? `Currently assigned to: ${lead.assignedToName}. Change by userId.`
-                          : "Assign this lead to an agent by userId."
-                        : "Only admins, directors, and managers can change assignment."
-                    }
-                  />
-                </form>
-
-                <div
-                  style={{
-                    marginTop: "var(--space-4)",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: "var(--space-3)",
-                  }}
-                >
                   <div
                     style={{
-                      fontSize: "var(--text-xs)",
-                      color: "var(--color-text-soft)",
+                      marginTop: "var(--space-4)",
                       display: "flex",
-                      flexDirection: "column",
-                      gap: "0.15rem",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "var(--space-3)",
                     }}
                   >
-                    <span>
-                      Created:{" "}
-                      {new Date(
-                        lead.createdAt
-                      ).toLocaleString()}
-                    </span>
-                    <span>
-                      Last updated:{" "}
-                      {new Date(
-                        lead.updatedAt
-                      ).toLocaleString()}
-                    </span>
+                    <div
+                      style={{
+                        fontSize: "var(--text-xs)",
+                        color: "var(--color-text-soft)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.15rem",
+                      }}
+                    >
+                      <span>Created: {new Date(lead.createdAt).toLocaleString()}</span>
+                      <span>
+                        Last updated: {new Date(lead.updatedAt).toLocaleString()}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </Card>
+                </Card>
+              </div>
 
-              {/* Right: pre-call compliance + scripted call + script history + calls + compliance history & activity timeline */}
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-4)",
-                }}
-              >
+              <div style={{ gridColumn: "2 / 3" }}>
                 <Card
                   title="Pre-call compliance"
                   description="Run a pre-call compliance check before you dial."
                 >
                   <PreCallCompliancePanel leadId={lead.id} />
                 </Card>
+              </div>
 
+              {/* Row 2: Scripted call (left) + history (right) */}
+              <div style={{ gridColumn: "1 / 2" }}>
                 <Card
                   title="Scripted call"
                   description="Interactive script to guide this call and capture a clean trail for compliance."
                 >
                   <CallScriptPanel leadId={lead.id} />
                 </Card>
+              </div>
 
+              <div style={{ gridColumn: "2 / 3" }}>
                 <Card
                   title="Scripted call history"
                   description="Previous scripted call runs for this lead."
                 >
                   <CallScriptHistoryPanel leadId={lead.id} />
                 </Card>
+              </div>
 
+              {/* Row 3: Recent calls (left) + Compliance history (right) */}
+              <div style={{ gridColumn: "1 / 2" }}>
                 <Card
                   title="Recent calls"
                   description="Call sessions logged for this lead. Log manual calls below."
@@ -795,8 +757,7 @@ const LeadDetailPage: React.FC = () => {
                     onSubmit={handleLogCall}
                     style={{
                       display: "grid",
-                      gridTemplateColumns:
-                        "repeat(3, minmax(0, 1fr))",
+                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                       gap: "var(--space-3)",
                       marginBottom: "var(--space-3)",
                       alignItems: "flex-end",
@@ -810,6 +771,7 @@ const LeadDetailPage: React.FC = () => {
                       }}
                     >
                       <label
+                        htmlFor={directionSelectId}
                         style={{
                           fontSize: "var(--text-xs)",
                           color: "var(--color-text-soft)",
@@ -818,34 +780,25 @@ const LeadDetailPage: React.FC = () => {
                         Direction
                       </label>
                       <select
+                        id={directionSelectId}
+                        name="direction"
                         value={newCallDirection}
                         onChange={(e) =>
                           setNewCallDirection(
-                            e.target.value === "INBOUND"
-                              ? "INBOUND"
-                              : "OUTBOUND"
+                            e.target.value === "INBOUND" ? "INBOUND" : "OUTBOUND"
                           )
                         }
                         style={{
                           fontSize: "var(--text-xs)",
-                          padding:
-                            "0.35rem 0.5rem",
-                          borderRadius:
-                            "var(--radius-sm)",
-                          border:
-                            "1px solid var(--color-border-subtle)",
-                          backgroundColor:
-                            "var(--color-bg-subtle)",
-                          color:
-                            "var(--color-text-primary)",
+                          padding: "0.35rem 0.5rem",
+                          borderRadius: "var(--radius-sm)",
+                          border: "1px solid var(--color-border-subtle)",
+                          backgroundColor: "var(--color-bg-subtle)",
+                          color: "var(--color-text-primary)",
                         }}
                       >
-                        <option value="OUTBOUND">
-                          OUTBOUND
-                        </option>
-                        <option value="INBOUND">
-                          INBOUND
-                        </option>
+                        <option value="OUTBOUND">OUTBOUND</option>
+                        <option value="INBOUND">INBOUND</option>
                       </select>
                     </div>
 
@@ -857,6 +810,7 @@ const LeadDetailPage: React.FC = () => {
                       }}
                     >
                       <label
+                        htmlFor={purposeSelectId}
                         style={{
                           fontSize: "var(--text-xs)",
                           color: "var(--color-text-soft)",
@@ -865,6 +819,8 @@ const LeadDetailPage: React.FC = () => {
                         Purpose
                       </label>
                       <select
+                        id={purposeSelectId}
+                        name="purpose"
                         value={newCallPurpose}
                         onChange={(e) =>
                           setNewCallPurpose(
@@ -877,30 +833,17 @@ const LeadDetailPage: React.FC = () => {
                         }
                         style={{
                           fontSize: "var(--text-xs)",
-                          padding:
-                            "0.35rem 0.5rem",
-                          borderRadius:
-                            "var(--radius-sm)",
-                          border:
-                            "1px solid var(--color-border-subtle)",
-                          backgroundColor:
-                            "var(--color-bg-subtle)",
-                          color:
-                            "var(--color-text-primary)",
+                          padding: "0.35rem 0.5rem",
+                          borderRadius: "var(--radius-sm)",
+                          border: "1px solid var(--color-border-subtle)",
+                          backgroundColor: "var(--color-bg-subtle)",
+                          color: "var(--color-text-primary)",
                         }}
                       >
-                        <option value="ENROLLMENT">
-                          ENROLLMENT
-                        </option>
-                        <option value="EDUCATION">
-                          EDUCATION
-                        </option>
-                        <option value="MARKETING">
-                          MARKETING
-                        </option>
-                        <option value="SERVICE">
-                          SERVICE
-                        </option>
+                        <option value="ENROLLMENT">ENROLLMENT</option>
+                        <option value="EDUCATION">EDUCATION</option>
+                        <option value="MARKETING">MARKETING</option>
+                        <option value="SERVICE">SERVICE</option>
                       </select>
                     </div>
 
@@ -921,6 +864,7 @@ const LeadDetailPage: React.FC = () => {
                         }}
                       >
                         <label
+                          htmlFor={outcomeSelectId}
                           style={{
                             fontSize: "var(--text-xs)",
                             color: "var(--color-text-soft)",
@@ -929,38 +873,26 @@ const LeadDetailPage: React.FC = () => {
                           Outcome
                         </label>
                         <select
+                          id={outcomeSelectId}
+                          name="outcome"
                           value={newCallStatus}
                           onChange={(e) =>
                             setNewCallStatus(
-                              e.target.value as
-                                | "COMPLETED"
-                                | "FAILED"
-                                | "ABANDONED"
+                              e.target.value as "COMPLETED" | "FAILED" | "ABANDONED"
                             )
                           }
                           style={{
                             fontSize: "var(--text-xs)",
-                            padding:
-                              "0.35rem 0.5rem",
-                            borderRadius:
-                              "var(--radius-sm)",
-                            border:
-                              "1px solid var(--color-border-subtle)",
-                            backgroundColor:
-                              "var(--color-bg-subtle)",
-                            color:
-                              "var(--color-text-primary)",
+                            padding: "0.35rem 0.5rem",
+                            borderRadius: "var(--radius-sm)",
+                            border: "1px solid var(--color-border-subtle)",
+                            backgroundColor: "var(--color-bg-subtle)",
+                            color: "var(--color-text-primary)",
                           }}
                         >
-                          <option value="COMPLETED">
-                            COMPLETED
-                          </option>
-                          <option value="FAILED">
-                            FAILED
-                          </option>
-                          <option value="ABANDONED">
-                            ABANDONED
-                          </option>
+                          <option value="COMPLETED">COMPLETED</option>
+                          <option value="FAILED">FAILED</option>
+                          <option value="ABANDONED">ABANDONED</option>
                         </select>
                       </div>
                       <Button
@@ -977,8 +909,7 @@ const LeadDetailPage: React.FC = () => {
                   {logCallError && (
                     <div
                       style={{
-                        marginBottom:
-                          "var(--space-2)",
+                        marginBottom: "var(--space-2)",
                         fontSize: "var(--text-sm)",
                         color: "var(--color-danger)",
                       }}
@@ -990,8 +921,7 @@ const LeadDetailPage: React.FC = () => {
                   {callsError && (
                     <div
                       style={{
-                        marginBottom:
-                          "var(--space-2)",
+                        marginBottom: "var(--space-2)",
                         fontSize: "var(--text-sm)",
                         color: "var(--color-danger)",
                       }}
@@ -1000,14 +930,11 @@ const LeadDetailPage: React.FC = () => {
                     </div>
                   )}
 
-                  {calls.length === 0 &&
-                  !callsLoading &&
-                  !callsError ? (
+                  {calls.length === 0 && !callsLoading && !callsError ? (
                     <p
                       style={{
                         fontSize: "var(--text-sm)",
-                        color:
-                          "var(--color-text-soft)",
+                        color: "var(--color-text-soft)",
                         fontStyle: "italic",
                       }}
                     >
@@ -1022,18 +949,15 @@ const LeadDetailPage: React.FC = () => {
                       <table
                         style={{
                           width: "100%",
-                          borderCollapse:
-                            "collapse",
-                          fontSize:
-                            "var(--text-xs)",
+                          borderCollapse: "collapse",
+                          fontSize: "var(--text-xs)",
                         }}
                       >
                         <thead>
                           <tr
                             style={{
                               textAlign: "left",
-                              color:
-                                "var(--color-text-soft)",
+                              color: "var(--color-text-soft)",
                               borderBottom:
                                 "1px solid var(--color-border-subtle)",
                             }}
@@ -1094,8 +1018,7 @@ const LeadDetailPage: React.FC = () => {
                             <tr
                               key={call.id}
                               style={{
-                                borderBottom:
-                                  "1px solid rgba(15,23,42,0.6)",
+                                borderBottom: "1px solid rgba(15,23,42,0.6)",
                               }}
                             >
                               <td
@@ -1106,10 +1029,8 @@ const LeadDetailPage: React.FC = () => {
                                 <Link
                                   to={`/calls/${call.id}`}
                                   style={{
-                                    color:
-                                      "var(--color-primary)",
-                                    textDecoration:
-                                      "none",
+                                    color: "var(--color-primary)",
+                                    textDecoration: "none",
                                   }}
                                 >
                                   {call.id.slice(0, 8)}…
@@ -1134,11 +1055,7 @@ const LeadDetailPage: React.FC = () => {
                                   padding: "0.4rem",
                                 }}
                               >
-                                <Badge
-                                  variant={callStatusVariant(
-                                    call.status
-                                  )}
-                                >
+                                <Badge variant={callStatusVariant(call.status)}>
                                   {call.status.toLowerCase()}
                                 </Badge>
                               </td>
@@ -1188,14 +1105,19 @@ const LeadDetailPage: React.FC = () => {
                     </p>
                   )}
                 </Card>
+              </div>
 
+              <div style={{ gridColumn: "2 / 3" }}>
                 <Card
                   title="Compliance history"
                   description="Snapshot of prior compliance checks for this lead."
                 >
                   <ComplianceHistoryPanel leadId={lead.id} />
                 </Card>
+              </div>
 
+              {/* Row 4: Activity timeline (left) */}
+              <div style={{ gridColumn: "1 / 2" }}>
                 <Card
                   title="Activity timeline"
                   description="Audit trail of key actions taken on this lead."
@@ -1203,27 +1125,20 @@ const LeadDetailPage: React.FC = () => {
                   <ActivityTimelinePanel leadId={lead.id} />
                 </Card>
               </div>
-            </div>
 
-            {/* Bottom row: Enrollment + Tasks + Notes */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "minmax(0, 1.2fr) minmax(0, 1fr)",
-                gap: "var(--space-4)",
-                alignItems: "flex-start",
-              }}
-            >
-              <Card
-                title="Enrollment journey"
-                description="Track where this lead is in the enrollment pipeline."
-              >
-                <EnrollmentPanel leadId={lead.id} />
-              </Card>
+              {/* Row 5: Enrollment (left) + Tasks/Notes (right) */}
+              <div style={{ gridColumn: "1 / 2" }}>
+                <Card
+                  title="Enrollment journey"
+                  description="Track where this lead is in the enrollment pipeline."
+                >
+                  <EnrollmentPanel leadId={lead.id} />
+                </Card>
+              </div>
 
               <div
                 style={{
+                  gridColumn: "2 / 3",
                   display: "flex",
                   flexDirection: "column",
                   gap: "var(--space-4)",

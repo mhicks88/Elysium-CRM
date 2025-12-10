@@ -8,6 +8,7 @@ import {
   Navigate,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
+import CoachingPage from "./routes/calls/CoachingPage";
 
 // Route components
 import LeadsPage from "./routes/leads/Leads";
@@ -23,6 +24,7 @@ import SignupOrgPage from "./routes/auth/SignupOrg";
 import ForgotPasswordPage from "./routes/auth/ForgotPassword";
 import ResetPasswordPage from "./routes/auth/ResetPassword";
 import Dashboard from "./routes/dashboard/Dashboard";
+import ReportsPage from "./routes/reports/ReportsPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -47,6 +49,15 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAuth>
             <Dashboard />
+          </RequireAuth>
+        }
+      />
+
+      <Route
+        path="/reports"
+        element={
+          <RequireAuth>
+            <ReportsPage />
           </RequireAuth>
         }
       />
@@ -87,6 +98,16 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAuth>
             <CallDetailPage />
+          </RequireAuth>
+        }
+      />
+
+      {/* Coaching workspace */}
+      <Route
+        path="/calls/coaching"
+        element={
+          <RequireAuth>
+            <CoachingPage />
           </RequireAuth>
         }
       />

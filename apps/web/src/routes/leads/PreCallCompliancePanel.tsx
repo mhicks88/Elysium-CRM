@@ -46,8 +46,7 @@ export const PreCallCompliancePanel: React.FC<
     null;
 
   let statusLabel = "Not run";
-  let statusVariant: "success" | "danger" | "warning" | "neutral" =
-    "neutral";
+  let statusVariant: "success" | "danger" | "warning" | "neutral" = "neutral";
 
   if (status === "PASS" || status === "COMPLIANT") {
     statusLabel = "Pass";
@@ -59,6 +58,9 @@ export const PreCallCompliancePanel: React.FC<
     statusLabel = status;
     statusVariant = "warning";
   }
+
+  // Give the select a stable, unique id so the label can point to it
+  const purposeSelectId = `precall-purpose-${leadId}`;
 
   return (
     <form
@@ -85,6 +87,7 @@ export const PreCallCompliancePanel: React.FC<
           }}
         >
           <label
+            htmlFor={purposeSelectId}
             style={{
               fontSize: "var(--text-xs)",
               color: "var(--color-text-soft)",
@@ -93,12 +96,10 @@ export const PreCallCompliancePanel: React.FC<
             Call purpose
           </label>
           <select
+            id={purposeSelectId}
+            name="callPurpose"
             value={purpose}
-            onChange={(e) =>
-              setPurpose(
-                e.target.value as CallPurpose
-              )
-            }
+            onChange={(e) => setPurpose(e.target.value as CallPurpose)}
             style={{
               fontSize: "var(--text-sm)",
               padding: "0.35rem 0.5rem",
@@ -113,19 +114,44 @@ export const PreCallCompliancePanel: React.FC<
             <option value="MARKETING">MARKETING</option>
             <option value="SERVICE">SERVICE</option>
           </select>
+          <p
+            style={{
+              margin: 0,
+              fontSize: "var(--text-2xs)",
+              color: "var(--color-text-soft)",
+            }}
+          >
+            Used both for compliance rules and to pick a default scripted call.
+          </p>
         </div>
 
         <div
           style={{
             display: "flex",
             justifyContent: "flex-end",
-            gap: "0.5rem",
+            gap: "0.75rem",
             alignItems: "center",
           }}
         >
-          <Badge variant={statusVariant}>
-            {statusLabel}
-          </Badge>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: "0.15rem",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "var(--text-2xs)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              Current result
+            </span>
+            <Badge variant={statusVariant}>{statusLabel}</Badge>
+          </div>
+
           <Button
             type="submit"
             size="sm"
@@ -154,28 +180,38 @@ export const PreCallCompliancePanel: React.FC<
             marginTop: "0.25rem",
             fontSize: "var(--text-xs)",
             color: "var(--color-text-soft)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.35rem",
           }}
         >
-          {/* Try to show a human-ish summary if present, otherwise fall back to raw JSON */}
-          {typeof result.summary === "string" ? (
+          {typeof result.summary === "string" && result.summary.trim().length > 0 && (
             <div>{result.summary}</div>
-          ) : (
+          )}
+
+          {/* Raw JSON fallback for debug / compliance trace */}
+          <div
+            style={{
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--color-border-subtle)",
+              backgroundColor: "rgba(15,23,42,0.7)",
+              maxHeight: "200px",
+              overflow: "auto",
+              padding: "0.5rem 0.6rem",
+            }}
+          >
             <pre
               style={{
-                marginTop: "0.25rem",
-                padding: "0.5rem 0.6rem",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--color-border-subtle)",
-                backgroundColor: "rgba(15,23,42,0.7)",
-                maxHeight: "200px",
-                overflow: "auto",
+                margin: 0,
                 fontFamily: "monospace",
                 fontSize: "0.7rem",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
               }}
             >
               {JSON.stringify(result, null, 2)}
             </pre>
-          )}
+          </div>
         </div>
       )}
     </form>

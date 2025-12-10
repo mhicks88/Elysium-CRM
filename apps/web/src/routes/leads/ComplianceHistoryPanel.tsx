@@ -1,3 +1,5 @@
+// apps/web/src/routes/leads/ComplianceHistoryPanel.tsx
+
 import React, { useEffect, useState } from "react";
 import { getComplianceHistory } from "../../lib/apiClient";
 
@@ -50,64 +52,159 @@ export const ComplianceHistoryPanel: React.FC<ComplianceHistoryPanelProps> = ({
     };
   }, [leadId]);
 
+  if (loading && items.length === 0 && !error) {
+    return (
+      <p
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--color-text-soft)",
+        }}
+      >
+        Loading history…
+      </p>
+    );
+  }
+
+  if (error) {
+    return (
+      <p
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--color-danger)",
+        }}
+      >
+        {error}
+      </p>
+    );
+  }
+
+  if (!loading && !error && items.length === 0) {
+    return (
+      <p
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--color-text-soft)",
+          fontStyle: "italic",
+        }}
+      >
+        No past compliance checks recorded for this lead.
+      </p>
+    );
+  }
+
   return (
     <div
       style={{
-        border: "1px solid #e5e7eb",
-        padding: "1rem",
-        borderRadius: 6,
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.75rem",
+        maxHeight: "320px",
+        overflowY: "auto",
+        paddingRight: "0.25rem",
       }}
     >
-      <h2>Past compliance checks</h2>
+      {items.map((item) => {
+        const createdLabel = new Date(item.createdAt).toLocaleString();
+        const isPass = item.status === "PASS";
+        const statusColor = isPass ? "var(--color-success)" : "var(--color-danger)";
+        const statusBg = isPass
+          ? "rgba(22, 163, 74, 0.1)"
+          : "rgba(220, 38, 38, 0.1)";
 
-      {loading && <p>Loading history...</p>}
-      {error && <p style={{ color: "red" }}>{error}</p>}
+        // Keep result JSON but truncate visually for readability
+        const resultString = JSON.stringify(item.result ?? {}, null, 2);
+        const isLong = resultString.length > 600;
+        const displayResult = isLong
+          ? resultString.slice(0, 600) + "\n…"
+          : resultString;
 
-      {!loading && !error && items.length === 0 && (
-        <p style={{ fontStyle: "italic" }}>No past compliance checks.</p>
-      )}
-
-      <ul style={{ listStyle: "none", padding: 0, marginTop: "0.75rem" }}>
-        {items.map((item) => (
-          <li
+        return (
+          <div
             key={item.id}
             style={{
-              padding: "0.75rem",
-              borderRadius: 6,
-              border: "1px solid #e5e7eb",
-              marginBottom: "0.75rem",
-              background: "#fff",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--color-border-subtle)",
+              backgroundColor: "rgba(15,23,42,0.85)",
+              padding: "0.6rem 0.75rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.35rem",
             }}
           >
-            <div style={{ fontSize: 12, color: "#6b7280" }}>
-              {new Date(item.createdAt).toLocaleString()}
-            </div>
-            <div style={{ marginTop: "0.25rem" }}>
-              <strong>{item.purpose}</strong> →{" "}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                gap: "0.5rem",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.15rem",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    fontWeight: 500,
+                  }}
+                >
+                  {item.purpose}
+                </span>
+                <span
+                  style={{
+                    fontSize: "var(--text-2xs)",
+                    color: "var(--color-text-soft)",
+                  }}
+                >
+                  {createdLabel}
+                </span>
+              </div>
+
               <span
                 style={{
+                  fontSize: "var(--text-xs)",
                   fontWeight: 600,
-                  color: item.status === "PASS" ? "#166534" : "#b91c1c",
+                  padding: "0.1rem 0.45rem",
+                  borderRadius: "999px",
+                  color: statusColor,
+                  backgroundColor: statusBg,
                 }}
               >
                 {item.status}
               </span>
             </div>
-            <pre
+
+            <div
               style={{
-                marginTop: "0.5rem",
-                fontSize: 12,
-                background: "#f9fafb",
-                padding: "0.5rem",
-                borderRadius: 4,
-                overflowX: "auto",
+                fontSize: "var(--text-2xs)",
+                color: "var(--color-text-soft)",
+                borderRadius: "var(--radius-sm)",
+                border: "1px solid rgba(148,163,184,0.4)",
+                backgroundColor: "rgba(15,23,42,0.9)",
+                padding: "0.45rem 0.5rem",
+                maxHeight: "140px",
+                overflow: "auto",
               }}
             >
-              {JSON.stringify(item.result, null, 2)}
-            </pre>
-          </li>
-        ))}
-      </ul>
+              <pre
+                style={{
+                  margin: 0,
+                  fontFamily: "monospace",
+                  fontSize: "0.7rem",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {displayResult}
+              </pre>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 };

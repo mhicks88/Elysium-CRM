@@ -43,7 +43,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   const reportsNav: Array<{ label: string; path: string }> = [];
 
-  // Expose compliance reports to COMPLIANCE, ADMIN, MANAGER, DIRECTOR
+  // Expose reports to COMPLIANCE, ADMIN, MANAGER, DIRECTOR
   if (
     userRole === "COMPLIANCE" ||
     userRole === "ADMIN" ||
@@ -52,7 +52,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   ) {
     reportsNav.push({
       label: "Reports",
-      path: "/reports/compliance",
+      path: "/reports",
     });
   }
 
