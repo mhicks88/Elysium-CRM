@@ -25,6 +25,7 @@ import ForgotPasswordPage from "./routes/auth/ForgotPassword";
 import ResetPasswordPage from "./routes/auth/ResetPassword";
 import Dashboard from "./routes/dashboard/Dashboard";
 import ReportsPage from "./routes/reports/ReportsPage";
+import WorkPage from "./routes/work/WorkPage";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -58,6 +59,15 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAuth>
             <ReportsPage />
+          </RequireAuth>
+        }
+      />
+
+      <Route
+        path="/work"
+        element={
+          <RequireAuth>
+            <WorkPage />
           </RequireAuth>
         }
       />

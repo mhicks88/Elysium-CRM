@@ -14,7 +14,7 @@ type Role =
   | "VIEW_ONLY"
   | "MANAGER"
   | "DIRECTOR"
-  | "COMPLIANCE"
+  | "COMPLIANCE_OFFICER"
   | "READ_ONLY";
 
 /**
@@ -33,10 +33,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     userRole === "ADMIN" ||
     userRole === "MANAGER" ||
     userRole === "DIRECTOR" ||
-    userRole === "COMPLIANCE";
+    userRole === "COMPLIANCE_OFFICER";
 
   const baseNav: Array<{ label: string; path: string }> = [
     { label: "Dashboard", path: "/dashboard" },
+    { label: "Work", path: "/work" },
     { label: "Leads", path: "/leads" },
     { label: "Tasks", path: "/tasks" },
   ];
@@ -45,7 +46,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   // Expose reports to COMPLIANCE, ADMIN, MANAGER, DIRECTOR
   if (
-    userRole === "COMPLIANCE" ||
+    userRole === "COMPLIANCE_OFFICER" ||
     userRole === "ADMIN" ||
     userRole === "MANAGER" ||
     userRole === "DIRECTOR"

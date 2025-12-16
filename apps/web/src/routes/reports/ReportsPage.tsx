@@ -102,6 +102,17 @@ type ManagerDashboardViewData = {
 
 type AnyDashboardViewData = AgentDashboardViewData | ManagerDashboardViewData;
 
+// App roles from auth
+type AppRole =
+  | "ADMIN"
+  | "MANAGER"
+  | "DIRECTOR"
+  | "AGENT"
+  | "COMPLIANCE_OFFICER"
+  | "READ_ONLY";
+
+type DashboardRole = "AGENT" | "MANAGER" | "DIRECTOR" | "ADMIN";
+
 export const ReportsPage: React.FC = () => {
   const { user } = useAuth() as { user: any | null };
 
@@ -438,6 +449,19 @@ export const ReportsPage: React.FC = () => {
     const cards = d.cards;
     const passRatePct = (cards.teamComplianceSummary.passRate * 100).toFixed(1);
 
+    // Build a per-agent performance view from existing aggregates
+    const agentPerformance = cards.callVolumeByAgent.items.map((row) => {
+      const coaching = cards.coachingByAgent.items.find(
+        (c) => c.agentId === row.agentId
+      );
+      return {
+        agentId: row.agentId,
+        callCount: row.callCount,
+        coachedCallCount: coaching?.coachedCallCount ?? 0,
+        avgScore: coaching?.avgScore ?? null,
+      };
+    });
+
     return (
       <div
         style={{
@@ -672,6 +696,63 @@ export const ReportsPage: React.FC = () => {
         </Card>
 
         <Card
+          title="Agent performance"
+          description="Per-agent call volume and coaching scores (scoped to your team, or org-wide for admins/compliance)."
+        >
+          {agentPerformance.length === 0 ? (
+            <p
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--color-text-soft)",
+              }}
+            >
+              No agent activity yet for this scope.
+            </p>
+          ) : (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "var(--text-xs)",
+              }}
+            >
+              <thead>
+                <tr
+                  style={{
+                    textAlign: "left",
+                    color: "var(--color-text-soft)",
+                    borderBottom: "1px solid var(--color-border-subtle)",
+                  }}
+                >
+                  <th style={{ padding: "0.4rem" }}>Agent</th>
+                  <th style={{ padding: "0.4rem" }}>Calls</th>
+                  <th style={{ padding: "0.4rem" }}>Coached calls</th>
+                  <th style={{ padding: "0.4rem" }}>Avg score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agentPerformance.map((row) => (
+                  <tr key={row.agentId}>
+                    <td style={{ padding: "0.4rem" }}>
+                      {row.agentId.slice(0, 10)}…
+                    </td>
+                    <td style={{ padding: "0.4rem" }}>{row.callCount}</td>
+                    <td style={{ padding: "0.4rem" }}>
+                      {row.coachedCallCount}
+                    </td>
+                    <td style={{ padding: "0.4rem" }}>
+                      {row.avgScore != null
+                        ? row.avgScore.toFixed(1)
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
+        <Card
           title="Coaching summary"
           description="Coverage and quality of coaching across your team."
         >
@@ -847,15 +928,46 @@ export const ReportsPage: React.FC = () => {
     );
   }
 
-  const roleFromUser = (user?.role ?? "AGENT") as
-    | "AGENT"
-    | "MANAGER"
-    | "DIRECTOR"
-    | "ADMIN"
-    | "COMPLIANCE"
-    | "READ_ONLY";
-  const roleFromData = data?.role ?? roleFromUser;
-  const roleLabel = String(roleFromData).toLowerCase();
+  // App-level role (auth) and dashboard role (data layout)
+  const appRole = (user?.role ?? "AGENT") as AppRole;
+  const dashboardRole: DashboardRole =
+    (data?.role as DashboardRole | undefined) ??
+    (appRole === "AGENT"
+      ? "AGENT"
+      : appRole === "DIRECTOR"
+      ? "DIRECTOR"
+      : appRole === "ADMIN"
+      ? "ADMIN"
+      : "MANAGER");
+
+  const displayRoleLabel =
+    appRole === "COMPLIANCE_OFFICER"
+      ? "compliance"
+      : appRole.toLowerCase();
+
+  let scopeLabel: string;
+  switch (dashboardRole) {
+    case "AGENT":
+      scopeLabel = "Your own leads, tasks, and calls";
+      break;
+    case "MANAGER":
+      scopeLabel =
+        appRole === "COMPLIANCE_OFFICER"
+          ? "All agents in the org"
+          : "Your agents (and your own activity)";
+      break;
+    case "DIRECTOR":
+      scopeLabel = "Your managers and their agents";
+      break;
+    case "ADMIN":
+      scopeLabel =
+        appRole === "COMPLIANCE_OFFICER"
+          ? "All agents in the org"
+          : "Entire organization";
+      break;
+    default:
+      scopeLabel = "Team overview";
+  }
 
   return (
     <AppShell>
@@ -895,14 +1007,25 @@ export const ReportsPage: React.FC = () => {
                 maxWidth: "40rem",
               }}
             >
-              High-level metrics for your{" "}
-              {roleFromData === "AGENT"
-                ? "own performance and compliance."
-                : "team’s leads, calls, compliance, and coaching coverage."}
+              {dashboardRole === "AGENT"
+                ? "Metrics for your own book of business, calls, and compliance."
+                : appRole === "COMPLIANCE_OFFICER"
+                ? "Org-wide view of agents, calls, lead imports, and compliance risk."
+                : "High-level metrics for your team’s leads, calls, compliance, and coaching coverage."}
             </p>
           </div>
 
-          <Badge variant="secondary">Role: {roleLabel}</Badge>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.25rem",
+              alignItems: "flex-end",
+            }}
+          >
+            <Badge variant="secondary">Role: {displayRoleLabel}</Badge>
+            <Badge variant="secondary">Scope: {scopeLabel}</Badge>
+          </div>
         </div>
 
         {loading && !error && (
@@ -929,7 +1052,7 @@ export const ReportsPage: React.FC = () => {
 
         {data && !loading && !error && (
           <>
-            {data.role === "AGENT"
+            {dashboardRole === "AGENT"
               ? renderAgentView(data as AgentDashboardViewData)
               : renderManagerView(data as ManagerDashboardViewData)}
           </>

@@ -266,26 +266,45 @@ export interface TaskDto {
 }
 
 export async function getTasksList(params?: {
-  status?: ApiTaskStatus;
+  status?: ApiTaskStatus | "ALL";
   leadId?: string;
+  overdueOnly?: boolean;
+  limit?: number;
 }): Promise<{ tasks: TaskDto[] }> {
   const query = new URLSearchParams();
-  if (params?.status) query.set("status", params.status);
-  if (params?.leadId) query.set("leadId", params.leadId);
+
+  if (params?.status) {
+    query.set("status", params.status);
+  }
+
+  // Backend ignores leadId on /api/tasks, but we keep it for future flexibility.
+  if (params?.leadId) {
+    query.set("leadId", params.leadId);
+  }
+
+  if (params?.overdueOnly) {
+    query.set("overdueOnly", "true");
+  }
+
+  if (typeof params?.limit === "number") {
+    query.set("limit", String(params.limit));
+  }
 
   const qs = query.toString();
   const path = qs ? `/api/tasks?${qs}` : `/api/tasks`;
+
   return apiFetch<{ tasks: TaskDto[] }>(path, {
     method: "GET",
   });
 }
 
 export async function updateTask(
-  id: string,
+  leadId: string,
+  taskId: string,
   payload: Partial<Pick<TaskDto, "status" | "title" | "description" | "dueAt">>
 ): Promise<TaskDto> {
   return apiFetch<TaskDto>(
-    `/api/tasks/${encodeURIComponent(id)}`,
+    `/api/tasks/${encodeURIComponent(leadId)}/${encodeURIComponent(taskId)}`,
     {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -914,15 +933,18 @@ export type DashboardData =
       cards: ManagerAdminDashboardCards;
     };
 
-export interface DashboardResponse {
-  dashboard: DashboardData;
-}
+export type DashboardData =
+  | { role: "AGENT"; cards: AgentDashboardCards }
+  | {
+      role: "MANAGER" | "ADMIN" | "DIRECTOR";
+      cards: ManagerAdminDashboardCards;
+    };
 
+// The backend returns the dashboard object directly, not wrapped.
 export async function getDashboard(): Promise<DashboardData> {
-  const res = await apiFetch<DashboardResponse>("/api/dashboard", {
+  return apiFetch<DashboardData>("/api/dashboard", {
     method: "GET",
   });
-  return res.dashboard;
 }
 
 // ---------------------------------------------------------------------------
@@ -1045,9 +1067,7 @@ export async function uploadLeadImportCsv(
 
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
 
-  function idx(name: string): number {
-    return header.indexOf(name.toLowerCase());
-  }
+  const idx = (name: string): number => header.indexOf(name.toLowerCase());
 
   const idxFirstName = idx("firstname");
   const idxLastName = idx("lastname");
@@ -1062,20 +1082,16 @@ export async function uploadLeadImportCsv(
 
   const rows = lines.slice(1).map((line) => {
     const cols = line.split(",").map((c) => c.trim());
-    const firstName =
-      idxFirstName >= 0 ? cols[idxFirstName] ?? "" : "";
-    const lastName =
-      idxLastName >= 0 ? cols[idxLastName] ?? "" : "";
+
+    const firstName = idxFirstName >= 0 ? cols[idxFirstName] ?? "" : "";
+    const lastName = idxLastName >= 0 ? cols[idxLastName] ?? "" : "";
     const name = `${firstName} ${lastName}`.trim() || "Unknown";
 
     const phone = cols[idxPhone] ?? "";
-    const email =
-      idxEmail >= 0 ? cols[idxEmail] || null : null;
-    const state =
-      idxState >= 0 ? cols[idxState] || null : null;
+    const email = idxEmail >= 0 ? cols[idxEmail] || null : null;
+    const state = idxState >= 0 ? cols[idxState] || null : null;
     const source =
-      (idxSource >= 0 ? cols[idxSource] : options?.source) ??
-      "CSV_IMPORT";
+      (idxSource >= 0 ? cols[idxSource] : options?.source) ?? "CSV_IMPORT";
 
     return {
       name,
@@ -1088,13 +1104,35 @@ export async function uploadLeadImportCsv(
 
   const payload = {
     rows,
+    // backend expects optional "label" field for display
     label: options?.label ?? options?.source ?? null,
   };
 
-  return apiFetch<LeadCsvImportSummary>("/api/lead-import/manual", {
+  // Backend returns { success: true, totalRows, validRows, insertedCount, duplicateCount, errorCount, errors: [...] }
+  const backendSummary = await apiFetch<{
+    success?: boolean;
+    totalRows: number;
+    validRows: number;
+    insertedCount: number;
+    duplicateCount: number;
+    errorCount: number;
+    errors?: { rowIndex: number; message: string }[];
+  }>("/api/lead-import/manual", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+  const summary: LeadCsvImportSummary = {
+    jobId: `manual-${Date.now()}`, // synthetic ID for display only
+    filename: file.name ?? null,
+    source: options?.source ?? options?.label ?? null,
+    totalRows: backendSummary.totalRows,
+    createdCount: backendSummary.insertedCount,
+    duplicateCount: backendSummary.duplicateCount,
+    failedCount: backendSummary.errorCount,
+  };
+
+  return summary;
 }
 
 /**
@@ -1103,9 +1141,19 @@ export async function uploadLeadImportCsv(
  * Admin UI will show "No import jobs found yet."
  */
 export async function getRecentLeadImports(
-  _limit?: number
+  limit?: number
 ): Promise<{ jobs: LeadImportJobSummary[] }> {
-  return { jobs: [] };
+  const search = new URLSearchParams();
+  if (typeof limit === "number") {
+    search.set("limit", String(limit));
+  }
+
+  const qs = search.toString();
+  const path = qs ? `/api/lead-import/recent?${qs}` : "/api/lead-import/recent";
+
+  return apiFetch<{ jobs: LeadImportJobSummary[] }>(path, {
+    method: "GET",
+  });
 }
 
 export async function getRecentLeadImportsRaw(): Promise<any> {
@@ -1117,34 +1165,39 @@ export async function getRecentLeadImportsRaw(): Promise<any> {
 
 /**
  * Admin view of users in the org.
- * Backend: /api/admin/users
+ * Backend: /api/users
  */
-export async function getUsersAdmin(): Promise<any> {
-  return apiFetch<any>("/api/admin/users", {
+export interface AdminUserDto {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string;
+  role: string;
+  isActive: boolean;
+  managerId: string | null;
+  directorId: string | null;
+}
+
+export async function getUsersAdmin(): Promise<{ users: AdminUserDto[] }> {
+  return apiFetch<{ users: AdminUserDto[] }>("/api/users", {
     method: "GET",
   });
 }
 
-/**
- * Admin update for a user (role, managerId, directorId, etc.).
- * Backend: /api/admin/users/:id
- */
 export async function updateUserAdmin(
   userId: string,
-  payload: any
+  payload: Partial<AdminUserDto>
 ): Promise<any> {
-  return apiFetch<any>(`/api/admin/users/${encodeURIComponent(userId)}`, {
+  return apiFetch<any>(`/api/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
-/**
- * Admin create user.
- * Backend: POST /api/admin/users
- */
-export async function createUserAdmin(payload: any): Promise<any> {
-  return apiFetch<any>("/api/admin/users", {
+export async function createUserAdmin(
+  payload: Partial<AdminUserDto>
+): Promise<any> {
+  return apiFetch<any>("/api/users", {
     method: "POST",
     body: JSON.stringify(payload),
   });

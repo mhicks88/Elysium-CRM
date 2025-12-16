@@ -6,7 +6,7 @@
 //   - MANAGER: limited to their agents (and optionally themselves).
 //   - DIRECTOR: limited to their managers + those managers' agents (and themselves).
 //   - ADMIN: full org-wide view.
-// COMPLIANCE and READ_ONLY currently get an org-wide manager-style view.
+// COMPLIANCE and READ_ONLY currently get an org-wide overview.
 
 import { prisma } from "../../db/client";
 
@@ -16,6 +16,7 @@ export type DashboardRole =
   | "DIRECTOR"
   | "AGENT"
   | "COMPLIANCE"
+  | "COMPLIANCE_OFFICER"
   | "READ_ONLY";
 
 export interface AgentDashboardData {
@@ -715,7 +716,7 @@ export async function getManagerAdminDirectorDashboard(params: {
           avgScore: localAvg,
         };
       })
-      .sort((a, b) => (b.coachedCallCount - a.coachedCallCount))
+      .sort((a, b) => b.coachedCallCount - a.coachedCallCount)
       .slice(0, 10);
   }
 
@@ -784,16 +785,23 @@ export async function getDashboardForUser(params: {
   role: DashboardRole;
 }): Promise<DashboardData> {
   const { organizationId, userId, role } = params;
+  const normalizedRole = String(role);
 
-  if (role === "AGENT") {
+  // Plain agents: just their own stuff
+  if (normalizedRole === "AGENT") {
     return getAgentDashboard({ organizationId, userId });
   }
 
-  if (role === "MANAGER" || role === "ADMIN" || role === "DIRECTOR") {
+  // Manager / director / admin: team- or org-scoped dashboards
+  if (
+    normalizedRole === "MANAGER" ||
+    normalizedRole === "ADMIN" ||
+    normalizedRole === "DIRECTOR"
+  ) {
     const mappedRole: "MANAGER" | "ADMIN" | "DIRECTOR" =
-      role === "MANAGER"
+      normalizedRole === "MANAGER"
         ? "MANAGER"
-        : role === "DIRECTOR"
+        : normalizedRole === "DIRECTOR"
         ? "DIRECTOR"
         : "ADMIN";
 
@@ -804,7 +812,28 @@ export async function getDashboardForUser(params: {
     });
   }
 
-  // COMPLIANCE and READ_ONLY: reuse MANAGER-style overview for now.
+  // Compliance: org-wide view (equivalent to ADMIN scoping)
+  if (
+    normalizedRole === "COMPLIANCE" ||
+    normalizedRole === "COMPLIANCE_OFFICER"
+  ) {
+    return getManagerAdminDirectorDashboard({
+      organizationId,
+      role: "ADMIN",
+      userId,
+    });
+  }
+
+  // Read-only style roles: org-wide overview as well
+  if (normalizedRole === "READ_ONLY" || normalizedRole === "VIEW_ONLY") {
+    return getManagerAdminDirectorDashboard({
+      organizationId,
+      role: "ADMIN",
+      userId,
+    });
+  }
+
+  // Fallback: treat as manager for safety
   return getManagerAdminDirectorDashboard({
     organizationId,
     role: "MANAGER",

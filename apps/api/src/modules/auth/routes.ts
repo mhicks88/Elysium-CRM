@@ -325,6 +325,51 @@ authRouter.post(
   }
 );
 
+// GET /api/auth/me
+//
+// Return the current authenticated user based on the refreshToken cookie.
+// Used by the web app to restore auth state on reload.
+authRouter.get(
+  "/me",
+  async (req: Request, res: Response): Promise<Response | void> => {
+    try {
+      const refreshToken = req.cookies?.refreshToken;
+      if (!refreshToken) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const session = getSession(refreshToken);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+
+      const dbUser = await prisma.user.findUnique({
+        where: { id: session.userId },
+        include: { organization: true },
+      });
+
+      if (!dbUser) {
+        return res.status(401).json({ error: "User not found" });
+      }
+
+      const user = mapDbUserToUser(dbUser);
+
+      return res.json({
+        id: dbUser.id,
+        email: dbUser.email,
+        role: user.role,
+        organizationId: dbUser.organizationId,
+        organizationName: dbUser.organization?.name ?? null,
+        firstName: dbUser.firstName,
+        lastName: dbUser.lastName,
+      });
+    } catch (err) {
+      console.error("Auth me error", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
 // POST /api/auth/logout
 authRouter.post("/logout", (req: Request, res: Response) => {
   const refreshToken = req.cookies?.refreshToken;

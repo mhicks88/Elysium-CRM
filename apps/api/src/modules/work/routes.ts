@@ -279,3 +279,78 @@ workRouter.get(
   }
 );
 
+/**
+ * GET /api/work/queue
+ *
+ * Return a simple "work queue" for the current user, currently backed by
+ * open / in-progress tasks scoped by role/team.
+ *
+ * Response:
+ *  {
+ *    items: [
+ *      {
+ *        id: string;
+ *        type: "TASK";
+ *        leadId: string;
+ *        taskId: string;
+ *        createdAt: string;
+ *      },
+ *      ...
+ *    ]
+ *  }
+ */
+workRouter.get(
+  "/queue",
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const user = req.user!;
+      const orgId = user.organizationId;
+      const userId = user.id;
+      const role = String(user.role ?? "");
+
+      const assigneeIds = await getAllowedAssigneeIdsForUser({
+        organizationId: orgId,
+        userId,
+        role,
+      });
+
+      const where: any = {
+        organizationId: orgId,
+        status: {
+          in: ["OPEN", "IN_PROGRESS"] as any,
+        },
+      };
+
+      if (assigneeIds) {
+        where.assignedToUserId = { in: assigneeIds };
+      }
+
+      const tasks = await prisma.task.findMany({
+        where,
+        orderBy: [
+          // High priority first
+          { priority: "desc" },
+          // Then by due date if present
+          { dueAt: "asc" },
+          // Then by createdAt
+          { createdAt: "asc" },
+        ],
+        take: 100,
+      });
+
+      const items = tasks.map((t) => ({
+        id: t.id,
+        type: "TASK" as const,
+        leadId: t.leadId,
+        taskId: t.id,
+        createdAt: t.createdAt.toISOString(),
+      }));
+
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
